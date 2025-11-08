@@ -1,7 +1,6 @@
 package image
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -10,10 +9,9 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
-	"strings"
 	"time"
 
-	"github.com/google/go-containerregistry/pkg/authn"
+	"github.com/AnotherFullstackDev/cloud-ctl/internal/image/registry"
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/daemon"
@@ -21,15 +19,21 @@ import (
 	"golang.org/x/term"
 )
 
-type Service struct{}
-
-func MustNewService() *Service {
-	return &Service{}
+type Service struct {
+	config   Config
+	registry registry.Registry
 }
 
-func (s *Service) BuildImage(ctx context.Context, input BuildConfig) error {
-	if input.Cmd != nil {
-		return s.buildImageViaCmd(ctx, input.Cmd, input.Env, input.Dir)
+func MustNewService(config Config, registry registry.Registry) *Service {
+	return &Service{
+		config:   config,
+		registry: registry,
+	}
+}
+
+func (s *Service) BuildImage(ctx context.Context) error {
+	if s.config.Build.Cmd != nil {
+		return s.buildImageViaCmd(ctx, s.config.Build.Cmd, s.config.Build.Env, s.config.Build.Dir)
 	}
 
 	return fmt.Errorf("no image build strategy configured")
@@ -56,6 +60,8 @@ func (s *Service) buildImageViaCmd(ctx context.Context, cmd []string, env map[st
 	command.Stdout = os.Stdout
 	command.Stderr = os.Stderr
 
+	slog.Info("running image build command", "args", command.Args)
+
 	if err := command.Run(); err != nil {
 		return fmt.Errorf("running image build command: %w", err)
 	}
@@ -63,74 +69,18 @@ func (s *Service) buildImageViaCmd(ctx context.Context, cmd []string, env map[st
 	return nil
 }
 
-func requestSecretInput(in io.Reader, out io.Writer, prompt string) (string, error) {
-	_, err := fmt.Fprintf(out, "%s: ", prompt)
+func (s *Service) PushImage(ctx context.Context) error {
+	auth, err := s.registry.GetAuthentication()
 	if err != nil {
-		return "", fmt.Errorf("writing prompt: %w", err)
+		return fmt.Errorf("getting registry authentication: %w", err)
 	}
 
-	defer fmt.Fprintf(out, "secret received\n")
-
-	if f, ok := in.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
-		secret, err := term.ReadPassword(int(f.Fd()))
-		if err != nil {
-			return "", fmt.Errorf("reading secret input: %w", err)
-		}
-		if _, err := fmt.Fprintln(out); err != nil {
-			return "", fmt.Errorf("writing newline after secret input: %w", err)
-		}
-
-		return strings.TrimSpace(string(secret)), nil
-	}
-
-	// When not a terminal, fall back to normal input reading
-	reader := bufio.NewReader(in)
-	secret, err := reader.ReadString('\n')
-	if err != nil {
-		return "", fmt.Errorf("reading secret input: %w", err)
-	}
-
-	return strings.TrimSpace(secret), nil
-}
-
-func (s *Service) EnsureRegistryAuth(ctx context.Context, input Config) (authn.Authenticator, error) {
-	if input.Ghcr != nil {
-		// TODO: move to a better place - improve readability of the codebase
-		authToken := os.Getenv("CLOUDCTL_GHCR_TOKEN")
-		if authToken == "" {
-			authToken = os.Getenv("GITHUB_TOKEN")
-		}
-		if authToken == "" {
-			secret, err := requestSecretInput(os.Stdin, os.Stdout, "Please provide Github Personal Access Token (PAT)")
-			if err != nil {
-				return nil, fmt.Errorf("requesting github token input: %w", err)
-			}
-			authToken = secret
-		}
-		if authToken == "" {
-			return nil, fmt.Errorf("no github token provided for ghcr authentication")
-		}
-
-		return authn.FromConfig(authn.AuthConfig{
-			Username: input.Ghcr.Username,
-			Password: authToken,
-		}), nil
-	}
-
-	return nil, fmt.Errorf("no registry authentication strategy configured")
-}
-
-func (s *Service) PushImage(ctx context.Context, input Config, auth authn.Authenticator) error {
-	var destRef string
-	if input.Ghcr != nil {
-		destRef = fmt.Sprintf("ghcr.io/%s/%s:%s", input.Ghcr.Owner, input.Ghcr.Repository, input.Ghcr.Tag)
-	}
-
+	destRef := s.registry.GetImageRef()
 	if destRef == "" {
-		return fmt.Errorf("no destination container registry configured")
+		return fmt.Errorf("container registry returned empty image reference")
 	}
 
-	srcRef, err := name.NewTag(fmt.Sprintf("%s:%s", input.Repository, input.Tag))
+	srcRef, err := name.NewTag(fmt.Sprintf("%s:%s", s.config.Repository, s.config.Tag))
 	if err != nil {
 		return fmt.Errorf("parsing source image tag: %w", err)
 	}
@@ -177,6 +127,19 @@ func (s *Service) PushImage(ctx context.Context, input Config, auth authn.Authen
 		}
 	}()
 
+	imageConfig, err := image.ConfigFile()
+	if err != nil {
+		return fmt.Errorf("getting image config file: %w", err)
+	}
+
+	slog.Info("pushing image to remote registry",
+		"source", srcRef,
+		"os", imageConfig.OS,
+		"architecture", imageConfig.Architecture,
+		"os_features", imageConfig.OSFeatures,
+		"os_version", imageConfig.OSVersion,
+		"variant", imageConfig.Variant)
+
 	startTime := time.Now()
 	maxUploadJobs := int(math.Min(16, float64(runtime.NumCPU())))
 	options := []remote.Option{
@@ -184,6 +147,13 @@ func (s *Service) PushImage(ctx context.Context, input Config, auth authn.Authen
 		remote.WithAuth(auth),
 		remote.WithProgress(progressChan),
 		remote.WithJobs(maxUploadJobs),
+		remote.WithPlatform(v1.Platform{
+			Architecture: imageConfig.Architecture,
+			OS:           imageConfig.OS,
+			OSFeatures:   imageConfig.OSFeatures,
+			OSVersion:    imageConfig.OSVersion,
+			Variant:      imageConfig.Variant,
+		}),
 	}
 	if err := remote.Write(destTag, image, options...); err != nil {
 		return fmt.Errorf("pushing image to remote registry: %w", err)

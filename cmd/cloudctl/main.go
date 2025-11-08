@@ -9,6 +9,9 @@ import (
 	"github.com/AnotherFullstackDev/cloud-ctl/internal/clouds/render"
 	"github.com/AnotherFullstackDev/cloud-ctl/internal/config"
 	"github.com/AnotherFullstackDev/cloud-ctl/internal/image"
+	"github.com/AnotherFullstackDev/cloud-ctl/internal/image/registry"
+	"github.com/AnotherFullstackDev/cloud-ctl/internal/keyring"
+	"github.com/AnotherFullstackDev/cloud-ctl/internal/lib"
 	"github.com/spf13/cobra"
 )
 
@@ -27,14 +30,30 @@ func main() {
 		log.Fatal(fmt.Errorf("error loading config: %w", err))
 	}
 
-	providerPerService := map[string]clouds.CloudProvider{}
-	imageConfigPerService := map[string]image.Config{}
+	credentialsStorage := keyring.MustNewService("container-registry")
+
+	providerPerService := make(map[string]clouds.CloudProvider, len(cfg.Services))
+	imagePerService := make(map[string]*image.Service, len(cfg.Services))
 	for key, svc := range cfg.Services {
 		imageConfig, err := config.LoadVariableServiceConfigPart[image.Config](cfg, key, "image")
 		if err != nil {
 			log.Fatal(fmt.Errorf("error loading image build config: %w", err))
 		}
-		imageConfigPerService[key] = imageConfig
+
+		var containerRegistry registry.Registry
+
+		if imageConfig.Ghcr != nil {
+			containerRegistry = registry.NewGithubContainerRegistry(credentialsStorage, *imageConfig.Ghcr, []string{
+				lib.GHCRAccessKeyEnv,
+				lib.GithubTokenEnv,
+			})
+		}
+
+		if containerRegistry == nil {
+			log.Fatalf("no registry configured for image: %s:%s", imageConfig.Repository, imageConfig.Tag)
+		}
+
+		imagePerService[key] = image.MustNewService(imageConfig, containerRegistry)
 
 		if _, ok := svc.Extras[renderProviderKey]; ok {
 			renderCfg, err := config.LoadVariableServiceConfigPart[render.Config](cfg, key, renderProviderKey)
@@ -51,7 +70,7 @@ func main() {
 	}
 
 	RootCmd.AddCommand(
-		service.NewServiceCmd(providerPerService, imageConfigPerService, image.MustNewService()),
+		service.NewServiceCmd(providerPerService, imagePerService),
 	)
 
 	if err := RootCmd.Execute(); err != nil {

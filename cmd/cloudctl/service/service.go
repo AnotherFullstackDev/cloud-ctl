@@ -6,13 +6,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func NewServiceCmd(providers map[string]clouds.CloudProvider, imagesConfig map[string]image.Config, imageSvc *image.Service) *cobra.Command {
+func NewServiceCmd(providers map[string]clouds.CloudProvider, images map[string]*image.Service) *cobra.Command {
 	serviceCmd := &cobra.Command{
 		Use:   "service",
 		Short: "Deploy a service to the cloud provider",
 	}
 
-	serviceCmd.AddCommand(newServiceDeployCmd(providers, imagesConfig, imageSvc))
+	serviceCmd.AddCommand(newServiceDeployCmd(providers, images))
 
 	return serviceCmd
 }
