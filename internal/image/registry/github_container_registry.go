@@ -10,8 +10,9 @@ import (
 )
 
 const (
-	GHCRDomain            = "ghcr.io"
-	accessTokenStorageKey = "ghcr_access_token"
+	GHCRDomain              = "ghcr.io"
+	accessTokenStorageKey   = "ghcr_access_token"
+	accessTokenStorageLabel = "GHCR Access Token"
 )
 
 // GithubContainerRegistryConfig -  Github container registry destination config
@@ -23,12 +24,12 @@ type GithubContainerRegistryConfig struct {
 }
 
 type GithubContainerRegistry struct {
-	storage         CredentialsStorage
+	storage         lib.CredentialsStorage
 	config          GithubContainerRegistryConfig
 	accessTokenEnvs []string
 }
 
-func NewGithubContainerRegistry(storage CredentialsStorage, config GithubContainerRegistryConfig, accessTokenEnvs []string) *GithubContainerRegistry {
+func NewGithubContainerRegistry(storage lib.CredentialsStorage, config GithubContainerRegistryConfig, accessTokenEnvs []string) *GithubContainerRegistry {
 	return &GithubContainerRegistry{
 		storage:         storage,
 		config:          config,
@@ -56,14 +57,15 @@ func (r *GithubContainerRegistry) GetAuthentication() (authn.Authenticator, erro
 		if err != nil {
 			return nil, fmt.Errorf("requesting github token input: %w", err)
 		}
+		if authToken != "" {
+			if err := r.storage.Set(accessTokenStorageKey, authToken, lib.KeyExtras{Label: accessTokenStorageLabel}); err != nil {
+				return nil, fmt.Errorf("storing ghcr access token: %w", err)
+			}
+		}
 	}
 
 	if authToken == "" {
 		return nil, fmt.Errorf("no github token provided for ghcr authentication")
-	}
-
-	if err := r.storage.Set(accessTokenStorageKey, authToken); err != nil {
-		return nil, fmt.Errorf("storing ghcr access token: %w", err)
 	}
 
 	return authn.FromConfig(authn.AuthConfig{
