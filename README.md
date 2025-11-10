@@ -10,6 +10,12 @@ Currently, it is pretty mich work in progress. New features are being added regu
 - **Container Registries**: Supports pushing and deployment of images from popular container registries (GitHub Container Registry, Docker Hub is coming, AWS ECR is coming, GCP Container Registry is coming, Azure Container Registry is coming).
 - **Credentials storage**: Securely store and manage cloud provider credentials locally.
 
+## Installation
+
+```bash
+go install github.com/AnotherFullstackDev/cloud-ctl/cmd/cloudctl@latest
+```
+
 ## Commands
 - `cloudctl service deploy [service_name]`: Build a docker container and deploy to the specified cloud provider.
 
