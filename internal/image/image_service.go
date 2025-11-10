@@ -31,6 +31,10 @@ func MustNewService(config Config, registry registry.Registry) *Service {
 	}
 }
 
+func (s *Service) GetRegistry() registry.Registry {
+	return s.registry
+}
+
 func (s *Service) BuildImage(ctx context.Context) error {
 	if s.config.Build.Cmd != nil {
 		return s.buildImageViaCmd(ctx, s.config.Build.Cmd, s.config.Build.Env, s.config.Build.Dir)
@@ -69,6 +73,7 @@ func (s *Service) buildImageViaCmd(ctx context.Context, cmd []string, env map[st
 	return nil
 }
 
+// TODO: add check for image architecture compatibility with target registry/platform
 func (s *Service) PushImage(ctx context.Context) error {
 	auth, err := s.registry.GetAuthentication()
 	if err != nil {

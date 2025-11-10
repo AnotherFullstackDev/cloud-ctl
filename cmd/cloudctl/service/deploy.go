@@ -35,7 +35,7 @@ func newServiceDeployCmd(providers map[string]clouds.CloudProvider, images map[s
 				return fmt.Errorf("pushing image for service %s: %w", serviceID, err)
 			}
 
-			return serviceProvider.DeployService(cmd.Context())
+			return serviceProvider.DeployServiceFromImage(cmd.Context(), imageSvc.GetRegistry())
 		},
 	}
 

@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"log"
+	"log/slog"
+	"os"
 
 	"github.com/AnotherFullstackDev/cloud-ctl/cmd/cloudctl/service"
 	"github.com/AnotherFullstackDev/cloud-ctl/internal/clouds"
@@ -25,12 +27,18 @@ const (
 )
 
 func main() {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	}))
+	slog.SetDefault(logger)
+
 	cfg, err := config.NewConfig("./cloudctl.yaml")
 	if err != nil {
 		log.Fatal(fmt.Errorf("error loading config: %w", err))
 	}
 
-	credentialsStorage := keyring.MustNewService("container-registry")
+	registryCredentialsStorage := keyring.MustNewService("container-registry")
+	cloudApiCredentialsStorage := keyring.MustNewService("cloud-api-credentials")
 
 	providerPerService := make(map[string]clouds.CloudProvider, len(cfg.Services))
 	imagePerService := make(map[string]*image.Service, len(cfg.Services))
@@ -43,7 +51,7 @@ func main() {
 		var containerRegistry registry.Registry
 
 		if imageConfig.Ghcr != nil {
-			containerRegistry = registry.NewGithubContainerRegistry(credentialsStorage, *imageConfig.Ghcr, []string{
+			containerRegistry = registry.NewGithubContainerRegistry(registryCredentialsStorage, *imageConfig.Ghcr, []string{
 				lib.GHCRAccessKeyEnv,
 				lib.GithubTokenEnv,
 			})
@@ -61,7 +69,10 @@ func main() {
 				log.Fatal(fmt.Errorf("error loading render config: %w", err))
 			}
 
-			providerPerService[key] = render.MustNewProvider(key, renderCfg)
+			providerPerService[key] = render.MustNewProvider(key, renderCfg, cloudApiCredentialsStorage, []string{
+				lib.RenderApiKeyEnv,
+				lib.RenderNativeApiKeyEnv,
+			})
 		}
 
 		if _, ok := providerPerService[key]; !ok {

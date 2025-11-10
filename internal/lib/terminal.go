@@ -42,3 +42,37 @@ func RequestSecretInput(in io.Reader, out io.Writer, prompt string) (string, err
 
 	return strings.TrimSpace(secret), nil
 }
+
+func GetSecretFromEnvOrInput(storage CredentialsStorage, storageKey, storageLabel string, envVars []string, in io.Reader, out io.Writer, prompt string) (string, error) {
+	authToken, err := storage.Get(storageKey)
+	if err != nil {
+		return "", fmt.Errorf("retrieving secret from storage: %w", err)
+	}
+
+	if authToken == "" {
+		for _, envKey := range envVars {
+			authToken = strings.TrimSpace(os.Getenv(envKey))
+			if authToken != "" {
+				break
+			}
+		}
+	}
+
+	if authToken == "" {
+		authToken, err = RequestSecretInput(in, out, prompt)
+		if err != nil {
+			return "", fmt.Errorf("requesting secret input: %w", err)
+		}
+		if authToken != "" {
+			if err := storage.Set(storageKey, authToken, KeyExtras{Label: storageLabel}); err != nil {
+				return "", fmt.Errorf("storing secret: %w", err)
+			}
+		}
+	}
+
+	if authToken == "" {
+		return "", fmt.Errorf("no secret provided")
+	}
+
+	return authToken, nil
+}

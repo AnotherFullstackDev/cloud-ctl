@@ -3,7 +3,6 @@ package registry
 import (
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/AnotherFullstackDev/cloud-ctl/internal/lib"
 	"github.com/google/go-containerregistry/pkg/authn"
@@ -38,34 +37,10 @@ func NewGithubContainerRegistry(storage lib.CredentialsStorage, config GithubCon
 }
 
 func (r *GithubContainerRegistry) GetAuthentication() (authn.Authenticator, error) {
-	authToken, err := r.storage.Get(accessTokenStorageKey)
+	// TODO: need to add a mechanism for access token invalidation in case the registry rejects the authentication
+	authToken, err := lib.GetSecretFromEnvOrInput(r.storage, accessTokenStorageKey, accessTokenStorageLabel, r.accessTokenEnvs, os.Stdin, os.Stdout, "Please provide Github Personal Access Token (PAT)")
 	if err != nil {
-		return nil, fmt.Errorf("retrieving ghcr access token from storage: %w", err)
-	}
-
-	if authToken == "" {
-		for _, envKey := range r.accessTokenEnvs {
-			authToken = strings.TrimSpace(os.Getenv(envKey))
-			if authToken != "" {
-				break
-			}
-		}
-	}
-
-	if authToken == "" {
-		authToken, err = lib.RequestSecretInput(os.Stdin, os.Stdout, "Please provide Github Personal Access Token (PAT)")
-		if err != nil {
-			return nil, fmt.Errorf("requesting github token input: %w", err)
-		}
-		if authToken != "" {
-			if err := r.storage.Set(accessTokenStorageKey, authToken, lib.KeyExtras{Label: accessTokenStorageLabel}); err != nil {
-				return nil, fmt.Errorf("storing ghcr access token: %w", err)
-			}
-		}
-	}
-
-	if authToken == "" {
-		return nil, fmt.Errorf("no github token provided for ghcr authentication")
+		return nil, fmt.Errorf("requesting ghrc access token: %w", err)
 	}
 
 	return authn.FromConfig(authn.AuthConfig{

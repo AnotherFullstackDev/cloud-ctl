@@ -1,7 +1,6 @@
-package render
+package lib
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"net/url"
@@ -11,11 +10,11 @@ import (
 )
 
 type ApiClient struct {
-	baseURL    *url.URL
-	httpClient *httpreqx.HttpClient
+	baseURL *url.URL
+	*httpreqx.HttpClient
 }
 
-func NewApiClient(baseURL string) (*ApiClient, error) {
+func NewProtectedApiClient(baseURL, apiKey string) (*ApiClient, error) {
 	base, err := url.Parse(baseURL)
 	if err != nil {
 		return nil, fmt.Errorf("could not parse base url: %w", err)
@@ -23,16 +22,23 @@ func NewApiClient(baseURL string) (*ApiClient, error) {
 
 	httpClient := httpreqx.NewHttpClient().
 		SetBodyMarshaler(httpreqx.NewJSONBodyMarshaler()).
-		SetBodyUnmarshaler(httpreqx.NewJSONBodyUnmarshaler())
+		SetBodyUnmarshaler(httpreqx.NewJSONBodyUnmarshaler()).
+		SetHeaders(map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", apiKey),
+			"Content-Type":  "application/json",
+			"Accept":        "application/json",
+		}).
+		SetDumpOnError().
+		SetStackTraceEnabled(false)
 
 	return &ApiClient{
 		baseURL:    base,
-		httpClient: httpClient,
+		HttpClient: httpClient,
 	}, nil
 }
 
-func MustNewApiClient(baseURL string) *ApiClient {
-	client, err := NewApiClient(baseURL)
+func MustNewProtectedApiClient(baseURL, apiKey string) *ApiClient {
+	client, err := NewProtectedApiClient(baseURL, apiKey)
 	if err != nil {
 		log.Fatalf("could not create api client: %v", err)
 	}
@@ -66,9 +72,4 @@ func (c *ApiClient) URLWithQuery(query url.Values, path string) string {
 func (c *ApiClient) URLWithQueryf(query url.Values, format string, a ...interface{}) string {
 	path := fmt.Sprintf(format, a...)
 	return c.URLWithQuery(query, path)
-}
-
-func (c *ApiClient) DeployService(ctx context.Context, serviceID, key string) error {
-	_, err := c.httpClient.NewGetRequest(ctx, c.URLWithQueryf(url.Values{"key": {key}}, "/deploy/%s", serviceID)).Do()
-	return err
 }

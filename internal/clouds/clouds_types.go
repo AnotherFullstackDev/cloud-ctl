@@ -1,7 +1,13 @@
 package clouds
 
-import "context"
+import (
+	"context"
+)
+
+type ImageRegistry interface {
+	GetImageRef() string
+}
 
 type CloudProvider interface {
-	DeployService(ctx context.Context) error
+	DeployServiceFromImage(ctx context.Context, registry ImageRegistry) error
 }
