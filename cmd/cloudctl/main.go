@@ -5,6 +5,7 @@ import (
 	"log"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/AnotherFullstackDev/cloud-ctl/cmd/cloudctl/service"
 	"github.com/AnotherFullstackDev/cloud-ctl/internal/clouds"
@@ -26,9 +27,21 @@ const (
 	renderProviderKey = "render"
 )
 
+var logLevel = new(slog.LevelVar)
+
 func main() {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(lib.LogLevelEnv))) {
+	case "debug":
+		logLevel.Set(slog.LevelDebug)
+	case "warning", "warn":
+		logLevel.Set(slog.LevelWarn)
+	case "error", "err":
+		logLevel.Set(slog.LevelError)
+	default:
+		logLevel.Set(slog.LevelInfo)
+	}
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelDebug,
+		Level: logLevel,
 	}))
 	slog.SetDefault(logger)
 

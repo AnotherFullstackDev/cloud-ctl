@@ -64,7 +64,7 @@ func (s *Service) buildImageViaCmd(ctx context.Context, cmd []string, env map[st
 	command.Stdout = os.Stdout
 	command.Stderr = os.Stderr
 
-	slog.Info("running image build command", "args", command.Args)
+	slog.InfoContext(ctx, "running image build command", "args", command.Args)
 
 	if err := command.Run(); err != nil {
 		return fmt.Errorf("running image build command: %w", err)
@@ -137,13 +137,11 @@ func (s *Service) PushImage(ctx context.Context) error {
 		return fmt.Errorf("getting image config file: %w", err)
 	}
 
-	slog.Info("pushing image to remote registry",
+	slog.InfoContext(ctx, "pushing image to remote registry",
 		"source", srcRef,
+		"dest", destTag,
 		"os", imageConfig.OS,
-		"architecture", imageConfig.Architecture,
-		"os_features", imageConfig.OSFeatures,
-		"os_version", imageConfig.OSVersion,
-		"variant", imageConfig.Variant)
+		"architecture", imageConfig.Architecture)
 
 	startTime := time.Now()
 	maxUploadJobs := int(math.Min(16, float64(runtime.NumCPU())))
@@ -164,7 +162,7 @@ func (s *Service) PushImage(ctx context.Context) error {
 		return fmt.Errorf("pushing image to remote registry: %w", err)
 	}
 
-	slog.Info("image pushed successfully",
+	slog.InfoContext(ctx, "image pushed successfully",
 		"source", srcRef,
 		"destination", destRef,
 		"duration", fmt.Sprintf("%f seconds", time.Since(startTime).Seconds()))

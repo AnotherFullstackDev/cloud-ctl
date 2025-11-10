@@ -49,7 +49,7 @@ func (p *Provider) DeployServiceFromImage(ctx context.Context, registry clouds.I
 	if err != nil {
 		return fmt.Errorf("retrieving service %s: %w", p.config.ServiceID, err)
 	}
-	slog.Debug("retrieved service details", "service_id", p.config.ServiceID, "service", service)
+	slog.DebugContext(ctx, "retrieved service details", "service_id", p.config.ServiceID, "service", service)
 
 	if service.Type == services.ServiceTypeStaticSite {
 		return fmt.Errorf("service %s is static site - not supported for image deployment", p.config.ServiceID)

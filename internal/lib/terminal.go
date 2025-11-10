@@ -17,8 +17,6 @@ func RequestSecretInput(in io.Reader, out io.Writer, prompt string) (string, err
 		return "", fmt.Errorf("writing prompt: %w", err)
 	}
 
-	defer slog.Debug("secret received")
-
 	if f, ok := in.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
 		secret, err := term.ReadPassword(int(f.Fd()))
 		if err != nil {
@@ -31,7 +29,7 @@ func RequestSecretInput(in io.Reader, out io.Writer, prompt string) (string, err
 		return strings.TrimSpace(string(secret)), nil
 	}
 
-	slog.Debug("Not a terminal, falling back to normal input reading")
+	slog.Debug("Not a terminal, falling back to normal input reading", "prompt", prompt)
 
 	// When not a terminal, fall back to normal input reading
 	reader := bufio.NewReader(in)
@@ -39,6 +37,8 @@ func RequestSecretInput(in io.Reader, out io.Writer, prompt string) (string, err
 	if err != nil {
 		return "", fmt.Errorf("reading secret input: %w", err)
 	}
+
+	slog.Debug("secret received", "prompt", prompt)
 
 	return strings.TrimSpace(secret), nil
 }
