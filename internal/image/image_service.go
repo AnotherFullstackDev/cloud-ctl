@@ -24,7 +24,7 @@ type Service struct {
 	registry registry.Registry
 }
 
-func MustNewService(config Config, registry registry.Registry) *Service {
+func NewService(config Config, registry registry.Registry) *Service {
 	return &Service{
 		config:   config,
 		registry: registry,

@@ -12,5 +12,6 @@ type Config struct {
 	Repository string                                  `mapstructure:"repository"`
 	Tag        string                                  `mapstructure:"tag"`
 	Ghcr       *registry.GithubContainerRegistryConfig `mapstructure:"ghcr"`
+	AWSEcr     *registry.AwsECRConfig                  `mapstructure:"aws_ecr"`
 	Build      BuildConfig                             `mapstructure:"build"`
 }

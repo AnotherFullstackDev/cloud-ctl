@@ -3,26 +3,41 @@ package service
 import (
 	"fmt"
 
-	"github.com/AnotherFullstackDev/cloud-ctl/internal/clouds"
-	"github.com/AnotherFullstackDev/cloud-ctl/internal/image"
+	"github.com/AnotherFullstackDev/cloud-ctl/internal/config"
+	"github.com/AnotherFullstackDev/cloud-ctl/internal/factories"
+	"github.com/AnotherFullstackDev/cloud-ctl/internal/lib"
 	"github.com/spf13/cobra"
 )
 
-func newServiceDeployCmd(providers map[string]clouds.CloudProvider, images map[string]*image.Service) *cobra.Command {
+func newServiceDeployCmd(config *config.Config, registryCredentialsStorage, cloudApiCredentialsStorage lib.CredentialsStorage) *cobra.Command {
+	var serviceID, env string
+
 	deployImageCmd := &cobra.Command{
 		Use:   "deploy [name]",
 		Short: "Deploy a service to the cloud provider",
-		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			serviceID := args[0]
-			serviceProvider, ok := providers[serviceID]
-			if !ok {
-				return fmt.Errorf("provider for service %s is not found", serviceID)
+			if serviceID == "" {
+				return fmt.Errorf("service is required")
+			}
+			if env == "" {
+				return fmt.Errorf("environment is required")
 			}
 
-			imageSvc, ok := images[serviceID]
-			if !ok {
-				return fmt.Errorf("image for service %s is not found", serviceID)
+			envSpecificConfig, err := config.WithEnvironment(env)
+			if err != nil {
+				return fmt.Errorf("loading environment specific config: %w", err)
+			}
+
+			serviceFactory := factories.NewServiceFactory(serviceID, envSpecificConfig, registryCredentialsStorage, cloudApiCredentialsStorage)
+
+			serviceProvider, err := serviceFactory.NewCloudProvider()
+			if err != nil {
+				return fmt.Errorf("getting provider for service %s: %w", serviceID, err)
+			}
+
+			imageSvc, err := serviceFactory.NewImageService()
+			if err != nil {
+				return fmt.Errorf("getting image for service %s: %w", serviceID, err)
 			}
 
 			ctx := cmd.Context()
@@ -38,6 +53,9 @@ func newServiceDeployCmd(providers map[string]clouds.CloudProvider, images map[s
 			return serviceProvider.DeployServiceFromImage(cmd.Context(), imageSvc.GetRegistry())
 		},
 	}
+
+	deployImageCmd.PersistentFlags().StringVar(&serviceID, "name", "", "Service to deploy")
+	deployImageCmd.PersistentFlags().StringVar(&env, "env", "", "Target environment")
 
 	return deployImageCmd
 }

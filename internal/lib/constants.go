@@ -3,6 +3,11 @@ package lib
 import "fmt"
 
 const (
+	RenderProviderKey = "render"
+	AwsEcsProviderKey = "aws_ecs"
+)
+
+const (
 	EnvKeyPrefix = "CLOUDCTL"
 )
 

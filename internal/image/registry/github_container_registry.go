@@ -36,6 +36,10 @@ func NewGithubContainerRegistry(storage lib.CredentialsStorage, config GithubCon
 	}
 }
 
+func (r *GithubContainerRegistry) GetAuthType() AuthType {
+	return AuthTypeAuthenticator
+}
+
 func (r *GithubContainerRegistry) GetAuthentication() (authn.Authenticator, error) {
 	// TODO: need to add a mechanism for access token invalidation in case the registry rejects the authentication
 	authToken, err := lib.GetSecretFromEnvOrInput(r.storage, accessTokenStorageKey, accessTokenStorageLabel, r.accessTokenEnvs, os.Stdin, os.Stdout, "Please provide Github Personal Access Token (PAT)")
@@ -47,6 +51,10 @@ func (r *GithubContainerRegistry) GetAuthentication() (authn.Authenticator, erro
 		Username: r.config.Username,
 		Password: authToken,
 	}), nil
+}
+
+func (r *GithubContainerRegistry) GetKeychain() authn.Keychain {
+	return nil
 }
 
 func (r *GithubContainerRegistry) GetImageRef() string {
