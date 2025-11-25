@@ -3,13 +3,11 @@ package service
 import (
 	"fmt"
 
-	"github.com/AnotherFullstackDev/cloud-ctl/internal/config"
 	"github.com/AnotherFullstackDev/cloud-ctl/internal/factories"
-	"github.com/AnotherFullstackDev/cloud-ctl/internal/lib"
 	"github.com/spf13/cobra"
 )
 
-func newServiceDeployCmd(config *config.Config, registryCredentialsStorage, cloudApiCredentialsStorage lib.CredentialsStorage) *cobra.Command {
+func newServiceDeployCmd(locator *factories.SharedServicesLocator) *cobra.Command {
 	var serviceID, env string
 
 	deployImageCmd := &cobra.Command{
@@ -23,12 +21,12 @@ func newServiceDeployCmd(config *config.Config, registryCredentialsStorage, clou
 				return fmt.Errorf("environment is required")
 			}
 
-			envSpecificConfig, err := config.WithEnvironment(env)
+			envSpecificConfig, err := locator.Config.WithEnvironment(env)
 			if err != nil {
 				return fmt.Errorf("loading environment specific config: %w", err)
 			}
 
-			serviceFactory := factories.NewServiceFactory(serviceID, envSpecificConfig, registryCredentialsStorage, cloudApiCredentialsStorage)
+			serviceFactory := factories.NewServiceFactory(serviceID, locator.WithConfig(envSpecificConfig))
 
 			serviceProvider, err := serviceFactory.NewCloudProvider()
 			if err != nil {

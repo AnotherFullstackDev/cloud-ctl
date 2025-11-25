@@ -40,7 +40,10 @@ func MustNewProvider(serviceID string, cfg Config, storage lib.CredentialsStorag
 }
 
 func (p *Provider) DeployServiceFromImage(ctx context.Context, registry clouds.ImageRegistry) error {
-	imageRef := registry.GetImageRef()
+	imageRef, err := registry.GetImageRef()
+	if err != nil {
+		return fmt.Errorf("getting image reference for service %s: %w", p.config.ServiceID, err)
+	}
 	if imageRef == "" {
 		return fmt.Errorf("image reference is empty for service %s", p.config.ServiceID)
 	}
@@ -52,11 +55,13 @@ func (p *Provider) DeployServiceFromImage(ctx context.Context, registry clouds.I
 	slog.DebugContext(ctx, "retrieved service details", "service_id", p.config.ServiceID, "service", service)
 
 	if service.Type == services.ServiceTypeStaticSite {
-		return fmt.Errorf("service %s is static site - not supported for image deployment", p.config.ServiceID)
+		return fmt.Errorf("service %s is static site - not supported for container image deployment", p.config.ServiceID)
 	}
 
 	// TODO: add check for deployment credentials validity
 	if service.ImagePath != imageRef {
+		slog.InfoContext(ctx, "updating service image", "service_id", p.config.ServiceID, "from", service.ImagePath, "to", imageRef)
+
 		err = p.api.UpdateService(ctx, p.config.ServiceID, services.UpdateServiceInput{
 			Image: &services.UpdateServiceImage{
 				OwnerID:              service.OwnerId,
@@ -68,6 +73,8 @@ func (p *Provider) DeployServiceFromImage(ctx context.Context, registry clouds.I
 			return fmt.Errorf("updating service %s image from %s to %s: %w", p.config.ServiceID, service.ImagePath, imageRef, err)
 		}
 	}
+
+	slog.InfoContext(ctx, "deploying image to service", "service_id", p.config.ServiceID, "image", imageRef)
 
 	err = p.api.TriggerDeploy(ctx, p.config.ServiceID, deploys.TriggerDeployInput{ImageID: imageRef})
 	if err != nil {

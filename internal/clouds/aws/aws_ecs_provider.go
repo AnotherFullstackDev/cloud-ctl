@@ -52,7 +52,10 @@ func (p *EcsProvider) DeployServiceFromImage(ctx context.Context, registry cloud
 	newContainerDefs := make([]types.ContainerDefinition, len(taskDef.ContainerDefinitions))
 	copy(newContainerDefs, taskDef.ContainerDefinitions)
 
-	imageRef := registry.GetImageRef()
+	imageRef, err := registry.GetImageRef()
+	if err != nil {
+		return fmt.Errorf("getting image reference for service %s: %w", p.config.ARN, err)
+	}
 	if imageRef == "" {
 		return fmt.Errorf("image reference is empty for service %s", p.config.ARN)
 	}

@@ -9,9 +9,10 @@ import (
 	"github.com/AnotherFullstackDev/cloud-ctl/internal/clouds/aws"
 	"github.com/AnotherFullstackDev/cloud-ctl/internal/clouds/render"
 	"github.com/AnotherFullstackDev/cloud-ctl/internal/config"
-	"github.com/AnotherFullstackDev/cloud-ctl/internal/image"
-	"github.com/AnotherFullstackDev/cloud-ctl/internal/image/registry"
+	"github.com/AnotherFullstackDev/cloud-ctl/internal/container_image"
+	"github.com/AnotherFullstackDev/cloud-ctl/internal/container_image/registry"
 	"github.com/AnotherFullstackDev/cloud-ctl/internal/lib"
+	"github.com/AnotherFullstackDev/cloud-ctl/internal/placeholders"
 )
 
 type ServiceFactory struct {
@@ -19,37 +20,49 @@ type ServiceFactory struct {
 	config                     *config.Config
 	registryCredentialsStorage lib.CredentialsStorage
 	cloudApiCredentialsStorage lib.CredentialsStorage
+	placeholdersService        *placeholders.Service
 }
 
-func NewServiceFactory(service string, config *config.Config, registryCredentialsStorage, cloudApiCredentialsStorage lib.CredentialsStorage) *ServiceFactory {
+func NewServiceFactory(service string, executionCtx *SharedServicesLocator) *ServiceFactory {
 	return &ServiceFactory{
 		service:                    service,
-		config:                     config,
-		registryCredentialsStorage: registryCredentialsStorage,
-		cloudApiCredentialsStorage: cloudApiCredentialsStorage,
+		config:                     executionCtx.Config,
+		registryCredentialsStorage: executionCtx.RegistryCredentialsStorage,
+		cloudApiCredentialsStorage: executionCtx.CloudApiCredentialsStorage,
+		placeholdersService:        executionCtx.PlaceholdersService,
 	}
 }
 
-func (f *ServiceFactory) NewImageService() (*image.Service, error) {
-	var imageConfig image.Config
-	if err := f.config.LoadVariableServiceConfigPart(&imageConfig, f.service, "image"); err != nil {
+func (f *ServiceFactory) NewImageService() (*container_image.Service, error) {
+	var imageConfig container_image.Config
+	if err := f.config.LoadVariableServiceConfigPart(&imageConfig, f.service, "container"); err != nil {
 		return nil, fmt.Errorf("error loading image build config: %w", err)
 	}
 
 	var containerRegistry registry.Registry
 	switch {
-	case imageConfig.Ghcr != nil:
-		containerRegistry = registry.NewGithubContainerRegistry(f.registryCredentialsStorage, *imageConfig.Ghcr, []string{
+	case imageConfig.Registry.Ghcr != nil:
+		resolvedGhcr, err := f.placeholdersService.ResolvePlaceholders(string(*imageConfig.Registry.Ghcr))
+		if err != nil {
+			return nil, fmt.Errorf("resolving GHCR registry placeholder: %w", err)
+		}
+
+		containerRegistry = registry.NewGithubContainerRegistry(f.registryCredentialsStorage, registry.GithubContainerRegistryConfig(resolvedGhcr), []string{
 			lib.GHCRAccessKeyEnv,
 			lib.GithubTokenEnv,
 		})
-	case imageConfig.AWSEcr != nil:
-		containerRegistry = registry.NewAwsECR(*imageConfig.AWSEcr)
+	case imageConfig.Registry.AWSEcr != nil:
+		resolvedEcr, err := f.placeholdersService.ResolvePlaceholders(string(*imageConfig.Registry.AWSEcr))
+		if err != nil {
+			return nil, fmt.Errorf("resolving AWS ECR registry placeholder: %w", err)
+		}
+
+		containerRegistry = registry.NewAwsECR(registry.AwsECRConfig(resolvedEcr))
 	default:
-		log.Fatalf("no registry configured for image: %s:%s", imageConfig.Repository, imageConfig.Tag)
+		log.Fatalf("no registry configured for image: %s", imageConfig.Image)
 	}
 
-	return image.NewService(imageConfig, containerRegistry), nil
+	return container_image.NewService(imageConfig, containerRegistry, f.placeholdersService), nil
 }
 
 func (f *ServiceFactory) NewCloudProvider() (clouds.CloudProvider, error) {

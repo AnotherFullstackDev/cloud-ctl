@@ -1,4 +1,4 @@
-package image
+package container_image
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/AnotherFullstackDev/cloud-ctl/internal/image/registry"
+	"github.com/AnotherFullstackDev/cloud-ctl/internal/container_image/registry"
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/daemon"
@@ -20,14 +20,16 @@ import (
 )
 
 type Service struct {
-	config   Config
-	registry registry.Registry
+	config               Config
+	registry             registry.Registry
+	placeholdersResolver PlaceholdersResolver
 }
 
-func NewService(config Config, registry registry.Registry) *Service {
+func NewService(config Config, registry registry.Registry, resolver PlaceholdersResolver) *Service {
 	return &Service{
-		config:   config,
-		registry: registry,
+		config:               config,
+		registry:             registry,
+		placeholdersResolver: resolver,
 	}
 }
 
@@ -48,14 +50,28 @@ func (s *Service) buildImageViaCmd(ctx context.Context, cmd []string, env map[st
 		return fmt.Errorf("no command provided for image build")
 	}
 
-	args := cmd
+	resolvedCmd := make([]string, 0, len(cmd))
+	for _, c := range cmd {
+		resolvedC, err := s.placeholdersResolver.ResolvePlaceholders(c)
+		if err != nil {
+			return fmt.Errorf("resolving placeholder in build command '%s': %w", c, err)
+		}
+		resolvedCmd = append(resolvedCmd, resolvedC)
+	}
+
+	args := resolvedCmd
 	if len(args) == 1 {
-		args = []string{"sh", "-c", cmd[0]}
+		args = []string{"sh", "-c", resolvedCmd[0]}
 	}
 
 	environment := os.Environ()
 	for k, v := range env {
-		environment = append(environment, fmt.Sprintf("%s=%s", k, v))
+		resolvedValue, err := s.placeholdersResolver.ResolvePlaceholders(v)
+		if err != nil {
+			return fmt.Errorf("resolving placeholder in build env var '%s'='%s': %w", k, v, err)
+		}
+
+		environment = append(environment, fmt.Sprintf("%s=%s", k, resolvedValue))
 	}
 
 	command := exec.CommandContext(ctx, args[0], args[1:]...)
@@ -75,17 +91,16 @@ func (s *Service) buildImageViaCmd(ctx context.Context, cmd []string, env map[st
 
 // TODO: add check for image architecture compatibility with target registry/platform
 func (s *Service) PushImage(ctx context.Context) error {
-	auth, err := s.registry.GetAuthentication()
+	destRef, err := s.registry.GetImageRef()
 	if err != nil {
-		return fmt.Errorf("getting registry authentication: %w", err)
+		return fmt.Errorf("getting image reference from registry: %w", err)
 	}
-
-	destRef := s.registry.GetImageRef()
 	if destRef == "" {
 		return fmt.Errorf("container registry returned empty image reference")
 	}
 
-	srcRef, err := name.NewTag(fmt.Sprintf("%s:%s", s.config.Repository, s.config.Tag))
+	resolvedImage, err := s.placeholdersResolver.ResolvePlaceholders(s.config.Image)
+	srcRef, err := name.NewTag(resolvedImage)
 	if err != nil {
 		return fmt.Errorf("parsing source image tag: %w", err)
 	}
@@ -100,6 +115,11 @@ func (s *Service) PushImage(ctx context.Context) error {
 		return fmt.Errorf("parsing destination image tag: %w", err)
 	}
 
+	auth, err := s.registry.GetAuthentication()
+	if err != nil {
+		return fmt.Errorf("getting registry authentication: %w", err)
+	}
+
 	var stdout io.Writer = os.Stdout
 	stderr := os.Stderr
 	tty := false
@@ -112,6 +132,10 @@ func (s *Service) PushImage(ctx context.Context) error {
 	go func() {
 		var lastUpdateTime time.Time
 		for update := range progressChan {
+			if !tty {
+				continue
+			}
+
 			if update.Error != nil {
 				fmt.Fprintf(stderr, "Error: %v\n", update.Error)
 				continue
@@ -126,9 +150,7 @@ func (s *Service) PushImage(ctx context.Context) error {
 
 			percentage := float64(update.Complete) / float64(update.Total) * 100
 
-			if tty {
-				fmt.Fprintf(stdout, "Image push: %.2f%% complete\n", percentage)
-			}
+			fmt.Fprintf(stdout, "Image push: %.2f%% complete\n", percentage)
 		}
 	}()
 

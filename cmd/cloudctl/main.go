@@ -9,8 +9,11 @@ import (
 
 	"github.com/AnotherFullstackDev/cloud-ctl/cmd/cloudctl/service"
 	"github.com/AnotherFullstackDev/cloud-ctl/internal/config"
+	"github.com/AnotherFullstackDev/cloud-ctl/internal/factories"
 	"github.com/AnotherFullstackDev/cloud-ctl/internal/keyring"
 	"github.com/AnotherFullstackDev/cloud-ctl/internal/lib"
+	"github.com/AnotherFullstackDev/cloud-ctl/internal/placeholders"
+	"github.com/AnotherFullstackDev/cloud-ctl/internal/placeholders/git"
 	"github.com/spf13/cobra"
 )
 
@@ -42,11 +45,18 @@ func main() {
 		log.Fatal(fmt.Errorf("error loading config: %w", err))
 	}
 
+	gitRepository, err := git.NewRepositoryInfoService(".")
+	if err != nil {
+		log.Fatalf("error initializing git repository info service: %v", err)
+	}
+
 	registryCredentialsStorage := keyring.MustNewService("container-registry")
 	cloudApiCredentialsStorage := keyring.MustNewService("cloud-api-credentials")
+	placeholdersService := placeholders.NewService(gitRepository)
+	sharedServicesLocator := factories.NewSharedServicesLocator(cfg, registryCredentialsStorage, cloudApiCredentialsStorage, placeholdersService)
 
 	RootCmd.AddCommand(
-		service.NewServiceCmd(cfg, registryCredentialsStorage, cloudApiCredentialsStorage),
+		service.NewServiceCmd(sharedServicesLocator),
 	)
 
 	if err := RootCmd.Execute(); err != nil {

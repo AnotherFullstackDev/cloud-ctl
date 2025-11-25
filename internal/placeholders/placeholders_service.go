@@ -17,6 +17,8 @@ type placeholderModifier struct {
 	args []string
 }
 
+type modifierResolver func(string, []string) (string, error)
+
 type placeholder struct {
 	raw           string
 	value         string
@@ -37,6 +39,7 @@ func NewService(gitRepoInfo git.RepositoryInfoService) *Service {
 	}
 }
 
+// TODO: consider using Go templates for placeholder resolution
 func (s *Service) extractPlaceholders(value string) ([]placeholder, error) {
 	placeholderRegExp, err := regexp.Compile(`{{\s*([^{}]+)\s*}}`)
 	if err != nil {
@@ -125,39 +128,19 @@ func (s *Service) ResolvePlaceholders(value string) (string, error) {
 	}
 
 	placeholderResolvers := map[string]placeholderResolver{
-		"git.branch": s.resolveGitBranch,
-		"git.commit": s.resolveGitCommit,
-		"git.tag":    s.resolveGitTag,
+		"git.branch":     s.resolveGitBranch,
+		"git.commit":     s.resolveGitCommit,
+		"git.tag":        s.resolveGitTag,
+		"time.timestamp": resolveUnixTimestamp,
+		"time.iso8601":   resolveISO8601Timestamp,
 	}
 
-	modifierResolvers := map[string]func(string, []string) (string, error){
-		"upper": func(input string, args []string) (string, error) {
-			return strings.ToUpper(input), nil
-		},
-		"lower": func(input string, args []string) (string, error) {
-			return strings.ToLower(input), nil
-		},
-		"trim": func(input string, args []string) (string, error) {
-			if len(args) > 1 {
-				return "", fmt.Errorf("trim modifier expects at most one argument, got %d. %w", len(args), lib.BadUserInputError)
-			}
-			if len(args) == 0 {
-				return strings.TrimSpace(input), nil
-			}
-			return strings.Trim(input, args[0]), nil
-		},
-		"replace": func(input string, args []string) (string, error) {
-			if len(args) != 2 {
-				return "", fmt.Errorf("replace modifier expects exactly two arguments, got %d. %w", len(args), lib.BadUserInputError)
-			}
-			return strings.Replace(input, args[0], args[1], 1), nil
-		},
-		"replace_all": func(input string, args []string) (string, error) {
-			if len(args) != 2 {
-				return "", fmt.Errorf("replace_all modifier expects exactly two arguments, got %d. %w", len(args), lib.BadUserInputError)
-			}
-			return strings.ReplaceAll(input, args[0], args[1]), nil
-		},
+	modifierResolvers := map[string]modifierResolver{
+		"upper":       upperModifier,
+		"lower":       lowerModifier,
+		"trim":        trimModifier,
+		"replace":     replaceModifier,
+		"replace_all": replaceAllModifier,
 	}
 
 	for _, placeholder := range placeholders {
@@ -185,7 +168,6 @@ func (s *Service) ResolvePlaceholders(value string) (string, error) {
 			}
 		}
 
-		//value = value[:placeholder.rawStartIdx] + resolvedValue + value[placeholder.rawEndIdx:]
 		value = strings.Replace(value, placeholder.raw, resolvedValue, 1)
 	}
 

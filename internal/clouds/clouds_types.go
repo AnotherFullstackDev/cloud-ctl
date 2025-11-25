@@ -5,7 +5,7 @@ import (
 )
 
 type ImageRegistry interface {
-	GetImageRef() string
+	GetImageRef() (string, error)
 }
 
 type CloudProvider interface {

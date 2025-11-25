@@ -15,5 +15,5 @@ type Registry interface {
 	GetAuthType() AuthType
 	GetKeychain() authn.Keychain
 	GetAuthentication() (authn.Authenticator, error)
-	GetImageRef() string
+	GetImageRef() (string, error)
 }
