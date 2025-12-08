@@ -68,7 +68,7 @@ ignored-app/
 
 		var gotNames []string
 		for _, pkg := range got {
-			gotNames = append(gotNames, pkg.MonorepoPath)
+			gotNames = append(gotNames, pkg.Path)
 		}
 		sort.Strings(gotNames)
 
@@ -105,7 +105,7 @@ packages:
 
 		var gotNames []string
 		for _, pkg := range got {
-			gotNames = append(gotNames, pkg.MonorepoPath)
+			gotNames = append(gotNames, pkg.Path)
 		}
 
 		r.NotContains(gotNames, ".git/sneaky")
@@ -127,7 +127,7 @@ packages:
 
 		var gotNames []string
 		for _, pkg := range got {
-			gotNames = append(gotNames, pkg.MonorepoPath)
+			gotNames = append(gotNames, pkg.Path)
 		}
 
 		r.Equal([]string{"."}, gotNames)

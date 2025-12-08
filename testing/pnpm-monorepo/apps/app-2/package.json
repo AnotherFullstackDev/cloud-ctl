@@ -1,17 +1,18 @@
 {
-  "name": "@pnpm-monorepo/lib-b",
+  "name": "app-2",
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "dependencies": {
-    "@pnpm-monorepo/lib-a": "workspace:*",
-    "@pnpm-monorepo/lib-c": "workspace:*"
-  },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "packageManager": "pnpm@10.20.0"
+  "packageManager": "pnpm@10.20.0",
+  "devDependencies": {
+    "dotenv": "^17.2.3",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -15,31 +16,39 @@ import (
 )
 
 type Config struct {
-	NodeVersion string       `mapstructure:"node_version"`
-	PnpmVersion string       `mapstructure:"pnpm_version"`
-	App         string       `mapstructure:"app"`
-	Root        string       `mapstructure:"root"`
-	ExtraFiles  []string     `mapstructure:"extra_files"`
-	Steps       []Step       `mapstructure:"steps"`
-	Platform    lib.Platform `mapstructure:"platform"`
-	Cmd         []string     `mapstructure:"cmd"`
+	NodeVersion  string       `mapstructure:"node_version"`
+	PnpmVersion  string       `mapstructure:"pnpm_version"`
+	App          string       `mapstructure:"app"`
+	Root         string       `mapstructure:"root"`
+	ExtraFiles   []string     `mapstructure:"extra_files"`
+	Steps        []Step       `mapstructure:"steps"`
+	RuntimeSteps []Step       `mapstructure:"runtime_steps"`
+	Platform     lib.Platform `mapstructure:"platform"`
+	Cmd          []string     `mapstructure:"cmd"`
 }
 
 type Step struct {
-	Task             string         `mapstructure:"task"`
+	Task             TaskID         `mapstructure:"task"`
 	WorkingDirectory *string        `mapstructure:"working_directory"`
 	Extra            map[string]any `mapstructure:",remain"`
 }
 
+type processStepsResult struct {
+	SystemPackages  []string
+	PostInstallCmds [][]string
+	NpmPackages     []string
+	Tasks           []Task
+}
+
 type Task interface {
+	GetTaskID() TaskID
 	GetRequiredSystemPackages() []string
 	GetPostInstallCommands() [][]string
+	GetRequiredNpmPackages() []string
 	GetCmd() ([][]string, error)
 }
 
-type Context struct {
-	AppPath string
-}
+type PlaceholderResolvers map[string]placeholders.PlaceholderResolver
 
 type Service struct {
 	config       Config
@@ -47,6 +56,14 @@ type Service struct {
 	monorepo     *PnpmMonorepo
 	placeholders *placeholders.Service
 }
+
+type TaskID string
+
+const (
+	TaskIDGrpcGenerateTsProto TaskID = "grpc/generate/ts-proto"
+	TaskIDSetupPnpm           TaskID = "setup/pnpm"
+	TaskIDCli                 TaskID = "cli"
+)
 
 func NewService(config Config, repoRoot string, monorepo *PnpmMonorepo, placeholders *placeholders.Service) *Service {
 	return &Service{config, repoRoot, monorepo, placeholders}
@@ -107,95 +124,148 @@ func (s *Service) ProcessPipeline(ctx context.Context, outputImage string) error
 	}
 	defer client.Close()
 
+	filesForPackageInstallation := []string{
+		appPackage.ManifestPath,
+		"package.json",
+		"pnpm-lock.yaml",
+		"pnpm-workspace.yaml",
+		".npmrc",
+		".gitignore",
+	}
+	for _, dep := range dependencies {
+		filesForPackageInstallation = append(filesForPackageInstallation, dep.ManifestPath)
+	}
+	for _, f := range filesForPackageInstallation {
+		stat, err := os.Stat(filepath.Join(s.repoRoot, f))
+		if err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to stat package installation path: %w", err)
+		}
+		if stat != nil && stat.IsDir() {
+			return fmt.Errorf("package installation path '%s' is a directory, expected a file", f)
+		}
+	}
+	l.Info("package installation files", "files", filesForPackageInstallation)
+
 	mandatoryFiles := []string{
-		appPackage.MonorepoPath,
+		appPackage.Path,
 		"package.json",
 		"pnpm-workspace.yaml",
+		"pnpm-lock.yaml",
 		"tsconfig.json",
 		".npmrc",
 		".gitignore",
 	}
 	includePaths := make([]string, 0, len(mandatoryFiles)+len(dependencies)+len(s.config.ExtraFiles))
 	for _, dep := range dependencies {
-		includePaths = append(includePaths, dep.MonorepoPath)
+		includePaths = append(includePaths, dep.Path)
 	}
 	includePaths = append(includePaths, mandatoryFiles...)
 	includePaths = append(includePaths, s.config.ExtraFiles...)
+	l.Info("production build files", "paths", includePaths)
 
-	pipelineContext := Context{
-		AppPath: appPackage.MonorepoPath,
+	pipelinePlaceholderResolvers := PlaceholderResolvers{
+		"app.dir": func() (string, error) {
+			return appPackage.Path, nil
+		},
+	}
+	stepResults, err := s.processSteps(s.config.Steps, pipelinePlaceholderResolvers)
+	if err != nil {
+		return fmt.Errorf("processing pipeline steps: %w", err)
 	}
 
-	var systemPackages []string
-	var postInstallCommands [][]string
-	var npmPackages []string
-	stepTasks := make([]Task, 0, len(s.config.Steps))
+	pnpmCacheVolume := client.CacheVolume(fmt.Sprintf("pnpm-cache-%s", s.config.PnpmVersion))
 
-	for _, step := range s.config.Steps {
-		switch step.Task {
-		case "grpc/generate/ts-proto":
-			task := NewCompileProtobufToJsTask(step, pipelineContext, s.repoRoot, s.placeholders)
-			systemPackages = append(systemPackages, task.GetRequiredSystemPackages()...)
-			postInstallCommands = append(postInstallCommands, task.GetPostInstallCommands()...)
-			npmPackages = append(npmPackages, task.GetRequiredNpmPackages()...)
-
-			stepTasks = append(stepTasks, task)
-		default:
-			return fmt.Errorf("%w - unsupported pipeline task '%s'", lib.BadUserInputError, step.Task)
-		}
-	}
-
-	c := dag.Container(dagger.ContainerOpts{Platform: dagger.Platform(s.config.Platform)}).
+	builder := dag.Container(dagger.ContainerOpts{Platform: dagger.Platform(s.config.Platform)}).
 		From(baseImage).
 		WithWorkdir(workdir).
 		WithEnvVariable("PNPM_HOME", "/pnpm").
 		WithEnvVariable("PATH", "$PNPM_HOME:$PATH", dagger.ContainerWithEnvVariableOpts{Expand: true}).
-		WithExec(append([]string{"apk", "add", "--no-cache"}, systemPackages...))
+		WithMountedCache("/pnpm/store", pnpmCacheVolume).
+		WithExec(append([]string{"apk", "add", "--no-cache"}, stepResults.SystemPackages...))
 
-	for _, cmd := range postInstallCommands {
-		c = c.WithExec(cmd)
+	for _, cmd := range stepResults.PostInstallCmds {
+		builder = builder.WithExec(cmd)
 	}
 
-	c = c.
+	builder = builder.
 		WithExec([]string{"corepack", "enable"}).
 		WithExec([]string{"corepack", "prepare", fmt.Sprintf("pnpm@%s", s.config.PnpmVersion), "--activate"})
 
-	c = c.WithExec(append([]string{"pnpm", "add", "-g"}, npmPackages...))
+	builder = builder.WithExec(append([]string{"pnpm", "add", "-g"}, stepResults.NpmPackages...))
 
-	c = c.
+	builder = builder.
 		WithDirectory(workdir, dag.Host().Directory(s.repoRoot), dagger.ContainerWithDirectoryOpts{
 			Include: []string{"pnpm-lock.yaml"},
 		}).
 		WithExec([]string{"pnpm", "fetch"})
 
-	// TODO: optimize this step by first copying only package.json & pnpm-workspace.yaml, installing deps, caching them, and only then copying the rest of the files
-	c = c.
-		WithDirectory(workdir, dag.Host().Directory(s.repoRoot), dagger.ContainerWithDirectoryOpts{
-			Include: includePaths,
-			Exclude: []string{
-				"**/node_modules/**",
-				"**/dist/**",
-				"**/build/**",
-				"**/out/**",
-				"**/.next/**",
-				"**/.cache/**",
-				"**/.turbo/**",
-			},
+	hostRepoRootDir := dag.Host().Directory(s.repoRoot)
+	builder = builder.
+		WithDirectory(workdir, hostRepoRootDir, dagger.ContainerWithDirectoryOpts{
+			Include: filesForPackageInstallation,
 		}).
-		WithExec([]string{"pnpm", "install", "--prefer-offline", "--frozen-lockfile"})
+		WithExec([]string{"pnpm", "install", "--prefer-offline", "--frozen-lockfile"}).
+		WithDirectory(workdir, hostRepoRootDir, dagger.ContainerWithDirectoryOpts{
+			Include: []string{"**"}, // include all files for build
+			Exclude: []string{
+				"**/node_modules",
+				"**/dist",
+				"**/build",
+				"**/out",
+				"**/.next",
+				"**/.cache",
+				"**/.turbo",
+			},
+		})
 
-	for _, task := range stepTasks {
+	for _, task := range stepResults.Tasks {
 		cmds, err := task.GetCmd()
 		if err != nil {
 			return fmt.Errorf("getting command for pipeline task: %w", err)
 		}
 
 		for _, cmd := range cmds {
-			c = c.WithExec(cmd)
+			builder = builder.WithExec(cmd)
 		}
 	}
 
-	err = c.
+	nodeModulePaths := []string{"node_modules", filepath.Join(appPackage.Path, "node_modules")}
+	for _, pkg := range append(dependencies, appPackage) {
+		nodeModulePaths = append(nodeModulePaths, filepath.Join(pkg.Path, "node_modules"))
+	}
+	l.Debug("node_modules paths to clean up", "paths", nodeModulePaths)
+
+	builder = builder.
+		WithExec(append([]string{"rm", "-rf"}, nodeModulePaths...)).
+		WithExec([]string{"pnpm", "install", "--prefer-offline", "--frozen-lockfile", "--prod", "--filter", fmt.Sprintf("%s...", appPackage.Manifest.Name)})
+
+	runtimeStepsResult, err := s.processSteps(s.config.RuntimeSteps, pipelinePlaceholderResolvers, TaskIDSetupPnpm)
+	if err != nil {
+		return fmt.Errorf("processing runtime steps: %w", err)
+	}
+
+	builderWorkdir := builder.Directory(workdir)
+	runtimePathsToInclude := append(includePaths, "node_modules")
+	runtime := client.Container(dagger.ContainerOpts{Platform: dagger.Platform(s.config.Platform)}).
+		From(baseImage).
+		WithWorkdir(workdir).
+		WithDirectory(workdir, builderWorkdir, dagger.ContainerWithDirectoryOpts{
+			Include: runtimePathsToInclude,
+		})
+	l.Info("runtime paths to include", "paths", runtimePathsToInclude)
+
+	for _, task := range runtimeStepsResult.Tasks {
+		cmds, err := task.GetCmd()
+		if err != nil {
+			return fmt.Errorf("getting command for runtime pipeline task: %w", err)
+		}
+
+		for _, cmd := range cmds {
+			runtime = runtime.WithExec(cmd)
+		}
+	}
+
+	err = runtime.
 		ExportImage(ctx, outputImage) // TODO: ensure images compression when exported
 
 	if err != nil {
@@ -206,4 +276,56 @@ func (s *Service) ProcessPipeline(ctx context.Context, outputImage string) error
 	l.Info(fmt.Sprintf("run 'docker run --rm -it %s sh' to access the image", outputImage))
 
 	return nil
+}
+
+func (s *Service) processSteps(steps []Step, placeholderResolvers PlaceholderResolvers, allowedSteps ...TaskID) (processStepsResult, error) {
+	l := slog.With("context", "pipeline_service", "method", "processSteps")
+	l.Debug("processing steps", "steps_count", len(steps), "allowed_steps_count", len(allowedSteps), "steps", steps)
+
+	result := processStepsResult{
+		SystemPackages:  make([]string, 0, len(steps)),
+		PostInstallCmds: make([][]string, 0, len(steps)),
+		NpmPackages:     make([]string, 0, len(steps)),
+		Tasks:           make([]Task, 0, len(steps)),
+	}
+
+	allowedStepsMap := make(map[TaskID]struct{}, len(allowedSteps))
+	for _, allowedStep := range allowedSteps {
+		allowedStepsMap[allowedStep] = struct{}{}
+	}
+
+	for _, step := range steps {
+		var task Task
+
+		if len(allowedStepsMap) > 0 {
+			if _, ok := allowedStepsMap[step.Task]; !ok {
+				l.Debug("task is not allowed in this context", "task", step.Task)
+				return result, fmt.Errorf("%w - pipeline step '%s' is not allowed in this context", lib.BadUserInputError, step.Task)
+			}
+		}
+
+		switch step.Task {
+		case TaskIDGrpcGenerateTsProto:
+			task = NewCompileProtobufToJsTask(step, placeholderResolvers, s.repoRoot, s.placeholders)
+		case TaskIDSetupPnpm:
+			task = NewSetupPnpmTask(s.config, step)
+		case TaskIDCli:
+			task = NewCliTask(step, placeholderResolvers, s.placeholders)
+		default:
+			return result, fmt.Errorf("%w - unsupported pipeline task '%s'", lib.BadUserInputError, step.Task)
+		}
+
+		result.SystemPackages = append(result.SystemPackages, task.GetRequiredSystemPackages()...)
+		result.PostInstallCmds = append(result.PostInstallCmds, task.GetPostInstallCommands()...)
+		result.NpmPackages = append(result.NpmPackages, task.GetRequiredNpmPackages()...)
+		result.Tasks = append(result.Tasks, task)
+
+		l.Debug("task processed",
+			"task", step.Task,
+			"system_packages", task.GetRequiredSystemPackages(),
+			"npm_packages", task.GetRequiredNpmPackages(),
+			"post_install_cmds", task.GetPostInstallCommands())
+	}
+
+	return result, nil
 }

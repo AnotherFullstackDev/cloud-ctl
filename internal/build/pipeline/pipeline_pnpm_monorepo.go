@@ -28,8 +28,9 @@ type PackageJson struct {
 }
 
 type WorkspacePackage struct {
-	MonorepoPath string
+	Path         string
 	Manifest     PackageJson
+	ManifestPath string
 }
 
 type WorkspaceManifest struct {
@@ -122,8 +123,9 @@ func (p *PnpmMonorepo) GetWorkspacePackages() ([]WorkspacePackage, error) {
 		}
 
 		matches[relPath] = WorkspacePackage{
-			MonorepoPath: relPath,
+			Path:         relPath,
 			Manifest:     pkgManifest,
+			ManifestPath: filepath.Join(relPath, "package.json"),
 		}
 
 		return nil
@@ -138,7 +140,7 @@ func (p *PnpmMonorepo) GetWorkspacePackages() ([]WorkspacePackage, error) {
 		packages = append(packages, workspacePackage)
 	}
 	slices.SortFunc(packages, func(a, b WorkspacePackage) int {
-		return strings.Compare(a.MonorepoPath, b.MonorepoPath)
+		return strings.Compare(a.Path, b.Path)
 	})
 
 	return packages, nil
@@ -191,7 +193,7 @@ func (p *PnpmMonorepo) getPackageDependencies(dependencies map[string]WorkspaceP
 		result = append(result, dep)
 	}
 	slices.SortFunc(result, func(a, b WorkspacePackage) int {
-		return strings.Compare(a.MonorepoPath, b.MonorepoPath)
+		return strings.Compare(a.Path, b.Path)
 	})
 
 	return result
