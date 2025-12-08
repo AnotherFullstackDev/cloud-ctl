@@ -12,6 +12,7 @@ func NewServiceCmd(locator *factories.SharedServicesLocator) *cobra.Command {
 	}
 
 	serviceCmd.AddCommand(newServiceDeployCmd(locator))
+	serviceCmd.AddCommand(newServiceBuildCmd(locator))
 
 	return serviceCmd
 }

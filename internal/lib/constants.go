@@ -24,3 +24,10 @@ var (
 	RenderApiKeyEnv       = fmt.Sprintf("%s_%s", EnvKeyPrefix, "RENDER_API_KEY")
 	RenderNativeApiKeyEnv = "RENDER_API_KEY"
 )
+
+type Platform string
+
+const (
+	PlatformLinuxAmd64 Platform = "linux/amd64"
+	PlatformLinuxArm64 Platform = "linux/arm64"
+)

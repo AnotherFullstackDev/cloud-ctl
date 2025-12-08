@@ -10,7 +10,7 @@ import (
 	"github.com/AnotherFullstackDev/cloud-ctl/internal/placeholders/git"
 )
 
-type placeholderResolver func() (string, error)
+type PlaceholderResolver func() (string, error)
 
 type placeholderModifier struct {
 	name string
@@ -121,13 +121,13 @@ func (s *Service) extractPlaceholders(value string) ([]placeholder, error) {
 	return placeholders, nil
 }
 
-func (s *Service) ResolvePlaceholders(value string) (string, error) {
+func (s *Service) ResolvePlaceholders(value string, extraResolvers ...map[string]PlaceholderResolver) (string, error) {
 	placeholders, err := s.extractPlaceholders(value)
 	if err != nil {
 		return "", fmt.Errorf("extracting placeholders: %w", err)
 	}
 
-	placeholderResolvers := map[string]placeholderResolver{
+	placeholderResolvers := map[string]PlaceholderResolver{
 		"git.branch":     s.resolveGitBranch,
 		"git.commit":     s.resolveGitCommit,
 		"git.tag":        s.resolveGitTag,
@@ -145,7 +145,20 @@ func (s *Service) ResolvePlaceholders(value string) (string, error) {
 
 	for _, placeholder := range placeholders {
 		resolver, ok := placeholderResolvers[placeholder.value]
+
 		if !ok {
+		extraResolversLoop:
+			for _, resolvers := range extraResolvers {
+				if extraResolver, exists := resolvers[placeholder.value]; exists {
+					resolver = extraResolver
+					ok = true
+					break extraResolversLoop
+				}
+			}
+		}
+
+		if !ok {
+
 			return "", fmt.Errorf("no resolver found for placeholder: %s. %w", placeholder.raw, lib.BadUserInputError)
 		}
 

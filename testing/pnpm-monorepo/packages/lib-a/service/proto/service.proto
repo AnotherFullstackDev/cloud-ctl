@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+import "common_lib.proto";
+
+service TestService {
+  rpc TestMethod (TestRequest) returns (TestResponse);
+}
+
+message TestRequest {
+  testing.lib_a.proto.TestMessage test_message = 1;
+}
+
+message TestResponse {
+  testing.lib_a.proto.ParentTestMessage parent_test_message = 1;
+}

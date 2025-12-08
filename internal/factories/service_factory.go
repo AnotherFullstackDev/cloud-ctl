@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"path/filepath"
 
+	"github.com/AnotherFullstackDev/cloud-ctl/internal/build/pipeline"
 	"github.com/AnotherFullstackDev/cloud-ctl/internal/clouds"
 	"github.com/AnotherFullstackDev/cloud-ctl/internal/clouds/aws"
 	"github.com/AnotherFullstackDev/cloud-ctl/internal/clouds/render"
@@ -62,7 +64,19 @@ func (f *ServiceFactory) NewImageService() (*container_image.Service, error) {
 		log.Fatalf("no registry configured for image: %s", imageConfig.Image)
 	}
 
-	return container_image.NewService(imageConfig, containerRegistry, f.placeholdersService), nil
+	pipelineConfig := imageConfig.Build.Pipeline
+	if pipelineConfig == nil {
+		pipelineConfig = &pipeline.Config{}
+	}
+	repoRoot := pipelineConfig.Root
+	if repoRoot == "" {
+		return nil, fmt.Errorf("no repository root provided")
+	}
+	repoRoot = filepath.Clean(repoRoot)
+	monorepoProvider := pipeline.NewPnpmMonorepo(repoRoot)
+	pipelineService := pipeline.NewService(*pipelineConfig, repoRoot, monorepoProvider, f.placeholdersService)
+
+	return container_image.NewService(imageConfig, containerRegistry, f.placeholdersService, pipelineService), nil
 }
 
 func (f *ServiceFactory) NewCloudProvider() (clouds.CloudProvider, error) {

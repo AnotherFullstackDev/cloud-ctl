@@ -2,3 +2,8 @@ cloudctl.yaml
 
 .idea
 .vscode
+
+node_modules
+dist
+build
+out

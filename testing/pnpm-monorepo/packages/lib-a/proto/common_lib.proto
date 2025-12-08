@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package testing.lib_a.proto;
+
+message TestMessage {
+  // A sample string field
+  string sample_field = 1;
+}
+
+message ParentTestMessage {
+  // A nested message field
+  TestMessage nested_field = 1;
+}

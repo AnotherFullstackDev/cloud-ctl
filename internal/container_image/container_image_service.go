@@ -11,7 +11,9 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/AnotherFullstackDev/cloud-ctl/internal/build/pipeline"
 	"github.com/AnotherFullstackDev/cloud-ctl/internal/container_image/registry"
+	"github.com/AnotherFullstackDev/cloud-ctl/internal/placeholders"
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/daemon"
@@ -22,14 +24,16 @@ import (
 type Service struct {
 	config               Config
 	registry             registry.Registry
-	placeholdersResolver PlaceholdersResolver
+	placeholdersResolver *placeholders.Service
+	pipelineService      *pipeline.Service
 }
 
-func NewService(config Config, registry registry.Registry, resolver PlaceholdersResolver) *Service {
+func NewService(config Config, registry registry.Registry, resolver *placeholders.Service, pipeline *pipeline.Service) *Service {
 	return &Service{
-		config:               config,
-		registry:             registry,
-		placeholdersResolver: resolver,
+		config,
+		registry,
+		resolver,
+		pipeline,
 	}
 }
 
@@ -38,8 +42,11 @@ func (s *Service) GetRegistry() registry.Registry {
 }
 
 func (s *Service) BuildImage(ctx context.Context) error {
-	if s.config.Build.Cmd != nil {
+	switch {
+	case len(s.config.Build.Cmd) > 0:
 		return s.buildImageViaCmd(ctx, s.config.Build.Cmd, s.config.Build.Env, s.config.Build.Dir)
+	case s.config.Build.Pipeline != nil:
+		return s.pipelineService.ProcessPipeline(ctx, s.config.Image)
 	}
 
 	return fmt.Errorf("no image build strategy configured")

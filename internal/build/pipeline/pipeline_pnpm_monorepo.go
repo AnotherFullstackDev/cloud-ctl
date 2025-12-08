@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
@@ -11,7 +12,6 @@ import (
 	"strings"
 
 	"github.com/AnotherFullstackDev/cloud-ctl/internal/lib"
-	"github.com/bmatcuk/doublestar/v4"
 	ignore "github.com/sabhiram/go-gitignore"
 	"gopkg.in/yaml.v3"
 )
@@ -83,7 +83,7 @@ func (p *PnpmMonorepo) GetWorkspacePackages() ([]WorkspacePackage, error) {
 			return fs.SkipDir
 		}
 
-		matchesIncludes, err := matchesOneOfPatterns(relPath, include)
+		matchesIncludes, err := lib.PathMatchesOneOfPatterns(relPath, include)
 		if err != nil {
 			return fmt.Errorf("matching include patterns: %w", err)
 		}
@@ -91,7 +91,7 @@ func (p *PnpmMonorepo) GetWorkspacePackages() ([]WorkspacePackage, error) {
 			return nil
 		}
 
-		matchesExcludes, err := matchesOneOfPatterns(relPath, exclude)
+		matchesExcludes, err := lib.PathMatchesOneOfPatterns(relPath, exclude)
 		if err != nil {
 			return fmt.Errorf("matching exclude patterns: %w", err)
 		}
@@ -198,10 +198,13 @@ func (p *PnpmMonorepo) getPackageDependencies(dependencies map[string]WorkspaceP
 }
 
 func (p *PnpmMonorepo) getWorkspaceManifest() (WorkspaceManifest, error) {
+	l := slog.With("context", "pnpm-monorepo-service", "method", "getWorkspaceManifest")
+
 	var manifest WorkspaceManifest
 
 	repoRoot := filepath.Clean(p.repoRoot)
 	manifestPath := filepath.Join(repoRoot, "pnpm-workspace.yaml")
+	l.Debug("loading manifest", "path", manifestPath)
 
 	content, err := os.ReadFile(manifestPath)
 	if err != nil {
@@ -242,26 +245,4 @@ func (p *PnpmMonorepo) splitWorkspacePackagesPatterns(patterns []string) (includ
 	}
 
 	return includePatterns, excludePatterns
-}
-
-func matchesOneOfPatterns(path string, patterns []string) (bool, error) {
-	if path == "" {
-		path = "."
-	}
-
-	for _, pattern := range patterns {
-		if pattern == "" {
-			continue
-		}
-
-		ok, err := doublestar.Match(pattern, path)
-		if err != nil {
-			return false, fmt.Errorf("match pattern %q: %w", pattern, err)
-		}
-		if ok {
-			return true, nil
-		}
-	}
-
-	return false, nil
 }

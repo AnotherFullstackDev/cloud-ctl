@@ -1,0 +1,81 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .: {}
+
+  apps/app-1:
+    dependencies:
+      '@pnpm-monorepo/lib-b':
+        specifier: workspace:*
+        version: link:../../packages/lib-b
+    devDependencies:
+      ts-proto:
+        specifier: ^2.8.3
+        version: 2.8.3
+
+  packages/lib-a: {}
+
+  packages/lib-b:
+    dependencies:
+      '@pnpm-monorepo/lib-a':
+        specifier: workspace:*
+        version: link:../lib-a
+
+packages:
+
+  '@bufbuild/protobuf@2.10.1':
+    resolution: {integrity: sha512-ckS3+vyJb5qGpEYv/s1OebUHDi/xSNtfgw1wqKZo7MR9F2z+qXr0q5XagafAG/9O0QPVIUfST0smluYSTpYFkg==}
+
+  case-anything@2.1.13:
+    resolution: {integrity: sha512-zlOQ80VrQ2Ue+ymH5OuM/DlDq64mEm+B9UTdHULv5osUMD6HalNTblf2b1u/m6QecjsnOkBpqVZ+XPwIVsy7Ng==}
+    engines: {node: '>=12.13'}
+
+  detect-libc@1.0.3:
+    resolution: {integrity: sha512-pGjwhsmsp4kL2RTz08wcOlGN83otlqHeD/Z5T8GXZB+/YcpQ/dgo+lbU8ZsGxV0HIvqqxo9l7mqYwyYMD9bKDg==}
+    engines: {node: '>=0.10'}
+    hasBin: true
+
+  dprint-node@1.0.8:
+    resolution: {integrity: sha512-iVKnUtYfGrYcW1ZAlfR/F59cUVL8QIhWoBJoSjkkdua/dkWIgjZfiLMeTjiB06X0ZLkQ0M2C1VbUj/CxkIf1zg==}
+
+  ts-poet@6.12.0:
+    resolution: {integrity: sha512-xo+iRNMWqyvXpFTaOAvLPA5QAWO6TZrSUs5s4Odaya3epqofBu/fMLHEWl8jPmjhA0s9sgj9sNvF1BmaQlmQkA==}
+
+  ts-proto-descriptors@2.0.0:
+    resolution: {integrity: sha512-wHcTH3xIv11jxgkX5OyCSFfw27agpInAd6yh89hKG6zqIXnjW9SYqSER2CVQxdPj4czeOhGagNvZBEbJPy7qkw==}
+
+  ts-proto@2.8.3:
+    resolution: {integrity: sha512-TdXInqG+61pj/TvORqITWjvjTTsL1EZxwX49iEj89+xFAcqPT8tjChpAGQXzfcF4MJwvNiuoCEbBOKqVf3ds3g==}
+    hasBin: true
+
+snapshots:
+
+  '@bufbuild/protobuf@2.10.1': {}
+
+  case-anything@2.1.13: {}
+
+  detect-libc@1.0.3: {}
+
+  dprint-node@1.0.8:
+    dependencies:
+      detect-libc: 1.0.3
+
+  ts-poet@6.12.0:
+    dependencies:
+      dprint-node: 1.0.8
+
+  ts-proto-descriptors@2.0.0:
+    dependencies:
+      '@bufbuild/protobuf': 2.10.1
+
+  ts-proto@2.8.3:
+    dependencies:
+      '@bufbuild/protobuf': 2.10.1
+      case-anything: 2.1.13
+      ts-poet: 6.12.0
+      ts-proto-descriptors: 2.0.0
