@@ -76,22 +76,28 @@ func (s *Service) ProcessPipeline(ctx context.Context, outputImage string) error
 		return fmt.Errorf("%w - no app specified in pipeline config", lib.BadUserInputError)
 	}
 
+	platform := s.config.Platform
+	if platform == "" {
+		platform = lib.PlatformLinuxAmd64
+	}
 	allowedPlatforms := map[lib.Platform]struct{}{
 		lib.PlatformLinuxAmd64: {},
 		lib.PlatformLinuxArm64: {},
 	}
-	if _, ok := allowedPlatforms[s.config.Platform]; !ok {
+	if _, ok := allowedPlatforms[platform]; !ok {
 		supported := make([]string, 0, len(allowedPlatforms))
 		for platform := range allowedPlatforms {
 			supported = append(supported, string(platform))
 		}
-		return fmt.Errorf("%w - unsupported platform '%s' for pipeline builds, Supported are %s", lib.BadUserInputError, s.config.Platform, strings.Join(supported, ", "))
+		return fmt.Errorf("%w - unsupported platform '%s' for pipeline builds, Supported are %s", lib.BadUserInputError, platform, strings.Join(supported, ", "))
 	}
 
 	l.Info("building docker image from pipeline config",
 		"app", s.config.App,
 		"node_version", s.config.NodeVersion,
-		"pnpm_version", s.config.PnpmVersion)
+		"pnpm_version", s.config.PnpmVersion,
+		"platform", platform,
+		"cmd", s.config.Cmd)
 
 	workspacePackages, err := s.monorepo.GetWorkspacePackages()
 	if err != nil {
@@ -111,6 +117,28 @@ func (s *Service) ProcessPipeline(ctx context.Context, outputImage string) error
 
 	dependencies := s.monorepo.GetPackageDependencies(appPackage, workspacePackages, PackageDependencyTypeDependencies, PackageDependencyTypeDevDependencies)
 	l.Debug("app package dependencies", "dependencies", dependencies)
+
+	pipelinePlaceholderResolvers := PlaceholderResolvers{
+		"app.dir": func() (string, error) {
+			return appPackage.Path, nil
+		},
+		"app.package": func() (string, error) {
+			return appPackage.Manifest.Name, nil
+		},
+	}
+
+	cmd := s.config.Cmd
+	if cmd == nil || len(cmd) == 0 {
+		return fmt.Errorf("%w - no 'cmd' specified for pipeline build", lib.BadUserInputError)
+	}
+	for i, cmdPart := range cmd {
+		cmdPartResolved, err := s.placeholders.ResolvePlaceholders(cmdPart, pipelinePlaceholderResolvers)
+		if err != nil {
+			return fmt.Errorf("failed to resolve placeholders for command '%s': %w", cmdPart, err)
+		}
+		cmd[i] = cmdPartResolved
+	}
+	l.Info("resolved cmd", "cmd", cmd)
 
 	baseImage := fmt.Sprintf("node:%s-alpine", s.config.NodeVersion)
 	workdir := "/app"
@@ -163,11 +191,6 @@ func (s *Service) ProcessPipeline(ctx context.Context, outputImage string) error
 	includePaths = append(includePaths, s.config.ExtraFiles...)
 	l.Info("production build files", "paths", includePaths)
 
-	pipelinePlaceholderResolvers := PlaceholderResolvers{
-		"app.dir": func() (string, error) {
-			return appPackage.Path, nil
-		},
-	}
 	stepResults, err := s.processSteps(s.config.Steps, pipelinePlaceholderResolvers)
 	if err != nil {
 		return fmt.Errorf("processing pipeline steps: %w", err)
@@ -175,7 +198,7 @@ func (s *Service) ProcessPipeline(ctx context.Context, outputImage string) error
 
 	pnpmCacheVolume := client.CacheVolume(fmt.Sprintf("pnpm-cache-%s", s.config.PnpmVersion))
 
-	builder := dag.Container(dagger.ContainerOpts{Platform: dagger.Platform(s.config.Platform)}).
+	builder := dag.Container(dagger.ContainerOpts{Platform: dagger.Platform(platform)}).
 		From(baseImage).
 		WithWorkdir(workdir).
 		WithEnvVariable("PNPM_HOME", "/pnpm").
@@ -246,7 +269,7 @@ func (s *Service) ProcessPipeline(ctx context.Context, outputImage string) error
 
 	builderWorkdir := builder.Directory(workdir)
 	runtimePathsToInclude := append(includePaths, "node_modules")
-	runtime := client.Container(dagger.ContainerOpts{Platform: dagger.Platform(s.config.Platform)}).
+	runtime := client.Container(dagger.ContainerOpts{Platform: dagger.Platform(platform)}).
 		From(baseImage).
 		WithWorkdir(workdir).
 		WithDirectory(workdir, builderWorkdir, dagger.ContainerWithDirectoryOpts{
@@ -266,6 +289,8 @@ func (s *Service) ProcessPipeline(ctx context.Context, outputImage string) error
 	}
 
 	err = runtime.
+		WithEntrypoint([]string{cmd[0]}).
+		WithDefaultArgs(cmd[1:]).
 		ExportImage(ctx, outputImage) // TODO: ensure images compression when exported
 
 	if err != nil {
