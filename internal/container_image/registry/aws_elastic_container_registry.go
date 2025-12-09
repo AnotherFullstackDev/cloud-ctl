@@ -16,7 +16,7 @@ type AwsECR struct {
 	config AwsECRConfig
 }
 
-func NewAwsECR(config AwsECRConfig) *AwsECR {
+func NewAwsECR(config AwsECRConfig) Registry {
 	return &AwsECR{config}
 }
 
@@ -27,6 +27,8 @@ func (r *AwsECR) GetAuthType() AuthType {
 func (r *AwsECR) GetAuthentication() (authn.Authenticator, error) {
 	return nil, nil
 }
+
+func (r *AwsECR) ResetAuthentication() error { return nil }
 
 func (r *AwsECR) GetKeychain() authn.Keychain {
 	helper := ecrhelper.NewECRHelper(ecrhelper.WithClientFactory(ecrapi.DefaultClientFactory{}))

@@ -68,3 +68,10 @@ func (s *Service) Set(key, value string, extra lib.KeyExtras) error {
 	}
 	return nil
 }
+
+func (s *Service) Remove(key string) error {
+	if err := s.ring.Remove(key); err != nil {
+		return fmt.Errorf("deleting key %q: %w", key, err)
+	}
+	return nil
+}

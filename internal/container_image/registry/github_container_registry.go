@@ -26,7 +26,7 @@ type GithubContainerRegistry struct {
 	accessTokenEnvs []string
 }
 
-func NewGithubContainerRegistry(storage lib.CredentialsStorage, config GithubContainerRegistryConfig, accessTokenEnvs []string) *GithubContainerRegistry {
+func NewGithubContainerRegistry(storage lib.CredentialsStorage, config GithubContainerRegistryConfig, accessTokenEnvs []string) Registry {
 	return &GithubContainerRegistry{
 		storage:         storage,
 		config:          config,
@@ -59,6 +59,17 @@ func (r *GithubContainerRegistry) GetAuthentication() (authn.Authenticator, erro
 		Username: username,
 		Password: authToken,
 	}), nil
+}
+
+func (r *GithubContainerRegistry) ResetAuthentication() error {
+	if err := r.storage.Remove(usernameStorageKey); err != nil {
+		return fmt.Errorf("resetting ghrc username: %w", err)
+	}
+	if err := r.storage.Remove(accessTokenStorageKey); err != nil {
+		return fmt.Errorf("resetting ghrc access token: %w", err)
+	}
+
+	return nil
 }
 
 func (r *GithubContainerRegistry) GetKeychain() authn.Keychain {

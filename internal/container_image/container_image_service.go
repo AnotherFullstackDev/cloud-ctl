@@ -2,10 +2,12 @@ package container_image
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"math"
+	"net/http"
 	"os"
 	"os/exec"
 	"runtime"
@@ -18,6 +20,7 @@ import (
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/daemon"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 	"golang.org/x/term"
 )
 
@@ -130,36 +133,10 @@ func (s *Service) PushImage(ctx context.Context) error {
 	var stdout io.Writer = os.Stdout
 	stderr := os.Stderr
 	tty := false
-	progressChan := make(chan v1.Update, 32)
 
 	if f, ok := stdout.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
 		tty = true
 	}
-
-	go func() {
-		var lastUpdateTime time.Time
-		for update := range progressChan {
-			if !tty {
-				continue
-			}
-
-			if update.Error != nil {
-				fmt.Fprintf(stderr, "Error: %v\n", update.Error)
-				continue
-			}
-			if update.Total <= 0 {
-				continue
-			}
-			if time.Since(lastUpdateTime) <= 500*time.Millisecond {
-				continue
-			}
-			lastUpdateTime = time.Now()
-
-			percentage := float64(update.Complete) / float64(update.Total) * 100
-
-			fmt.Fprintf(stdout, "Image push: %.2f%% complete\n", percentage)
-		}
-	}()
 
 	imageConfig, err := image.ConfigFile()
 	if err != nil {
@@ -173,22 +150,78 @@ func (s *Service) PushImage(ctx context.Context) error {
 		"architecture", imageConfig.Architecture)
 
 	startTime := time.Now()
-	maxUploadJobs := int(math.Min(16, float64(runtime.NumCPU())))
-	options := []remote.Option{
-		remote.WithContext(ctx),
-		remote.WithAuth(auth),
-		remote.WithProgress(progressChan),
-		remote.WithJobs(maxUploadJobs),
-		remote.WithPlatform(v1.Platform{
-			Architecture: imageConfig.Architecture,
-			OS:           imageConfig.OS,
-			OSFeatures:   imageConfig.OSFeatures,
-			OSVersion:    imageConfig.OSVersion,
-			Variant:      imageConfig.Variant,
-		}),
-	}
-	if err := remote.Write(destTag, image, options...); err != nil {
-		return fmt.Errorf("pushing image to remote registry: %w", err)
+	for {
+		progressChan := make(chan v1.Update, 32)
+
+		go func() {
+			var lastUpdateTime time.Time
+			for update := range progressChan {
+				if !tty {
+					continue
+				}
+
+				if update.Error != nil {
+					fmt.Fprintf(stderr, "Error: %v\n", update.Error)
+					continue
+				}
+				if update.Total <= 0 {
+					continue
+				}
+				if time.Since(lastUpdateTime) <= 500*time.Millisecond {
+					continue
+				}
+				lastUpdateTime = time.Now()
+
+				percentage := float64(update.Complete) / float64(update.Total) * 100
+
+				fmt.Fprintf(stdout, "Image push: %.2f%% complete\n", percentage)
+			}
+		}()
+
+		maxUploadJobs := int(math.Min(16, float64(runtime.NumCPU())))
+		options := []remote.Option{
+			remote.WithContext(ctx),
+			remote.WithAuth(auth),
+			remote.WithProgress(progressChan),
+			remote.WithJobs(maxUploadJobs),
+			remote.WithPlatform(v1.Platform{
+				Architecture: imageConfig.Architecture,
+				OS:           imageConfig.OS,
+				OSFeatures:   imageConfig.OSFeatures,
+				OSVersion:    imageConfig.OSVersion,
+				Variant:      imageConfig.Variant,
+			}),
+		}
+		if err := remote.Write(destTag, image, options...); err != nil {
+			var registryErr *transport.Error
+			if errors.As(err, &registryErr) {
+				isUnauthorizedErr := false
+				if registryErr.StatusCode == http.StatusUnauthorized || registryErr.StatusCode == http.StatusForbidden {
+					isUnauthorizedErr = true
+				}
+				for _, desc := range registryErr.Errors {
+					if desc.Code == transport.UnauthorizedErrorCode || desc.Code == transport.DeniedErrorCode {
+						isUnauthorizedErr = true
+					}
+				}
+				if isUnauthorizedErr {
+					slog.WarnContext(ctx, "unauthorized error pushing image to registry, resetting authentication and retrying", "error", err)
+
+					err = s.registry.ResetAuthentication()
+					if err != nil {
+						return fmt.Errorf("resetting registry authentication after unauthorized error: %w", err)
+					}
+					auth, err = s.registry.GetAuthentication()
+					if err != nil {
+						return fmt.Errorf("getting registry authentication after reset: %w", err)
+					}
+					continue
+				}
+			}
+			return fmt.Errorf("pushing image to remote registry: %w", err)
+		}
+
+		break
 	}
 
 	slog.InfoContext(ctx, "image pushed successfully",
