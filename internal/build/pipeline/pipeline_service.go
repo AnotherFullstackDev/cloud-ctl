@@ -21,6 +21,7 @@ type Config struct {
 	App          string       `mapstructure:"app"`
 	Root         string       `mapstructure:"root"`
 	ExtraFiles   []string     `mapstructure:"extra_files"`
+	ExcludeFiles []string     `mapstructure:"exclude_files"`
 	Steps        []Step       `mapstructure:"steps"`
 	RuntimeSteps []Step       `mapstructure:"runtime_steps"`
 	Platform     lib.Platform `mapstructure:"platform"`
@@ -43,7 +44,7 @@ type processStepsResult struct {
 type Task interface {
 	GetTaskID() TaskID
 	GetRequiredSystemPackages() []string
-	GetPostInstallCommands() [][]string
+	GetPostInstallCommands() ([][]string, error)
 	GetRequiredNpmPackages() []string
 	GetCmd() ([][]string, error)
 }
@@ -62,6 +63,7 @@ type TaskID string
 const (
 	TaskIDGrpcGenerateTsProto TaskID = "grpc/generate/ts-proto"
 	TaskIDSetupPnpm           TaskID = "setup/pnpm"
+	TaskIDSetupBun            TaskID = "setup/bun"
 	TaskIDCli                 TaskID = "cli"
 )
 
@@ -229,8 +231,8 @@ func (s *Service) ProcessPipeline(ctx context.Context, outputImage string) error
 		}).
 		WithExec([]string{"pnpm", "install", "--prefer-offline", "--frozen-lockfile"}).
 		WithDirectory(workdir, hostRepoRootDir, dagger.ContainerWithDirectoryOpts{
-			Include: []string{"**"}, // include all files for build
-			Exclude: []string{
+			//Include: []string{"**"}, // include all files for build
+			Exclude: append([]string{
 				"**/node_modules",
 				"**/dist",
 				"**/build",
@@ -238,7 +240,8 @@ func (s *Service) ProcessPipeline(ctx context.Context, outputImage string) error
 				"**/.next",
 				"**/.cache",
 				"**/.turbo",
-			},
+			}, s.config.ExcludeFiles...),
+			Gitignore: true,
 		})
 
 	for _, task := range stepResults.Tasks {
@@ -258,22 +261,66 @@ func (s *Service) ProcessPipeline(ctx context.Context, outputImage string) error
 	}
 	l.Debug("node_modules paths to clean up", "paths", nodeModulePaths)
 
-	builder = builder.
-		WithExec(append([]string{"rm", "-rf"}, nodeModulePaths...)).
-		WithExec([]string{"pnpm", "install", "--prefer-offline", "--frozen-lockfile", "--prod", "--filter", fmt.Sprintf("%s...", appPackage.Manifest.Name)})
+	deps := client.Container(dagger.ContainerOpts{Platform: dagger.Platform(platform)}).
+		From(baseImage).
+		WithWorkdir(workdir).
+		WithExec([]string{"apk", "add", "--no-cache", "curl"}).
+		WithExec([]string{"curl", "-fsSL", "https://gobinaries.com/tj/node-prune", "-o", "/tmp/install-node-prune.sh"}).
+		WithExec([]string{"sh", "/tmp/install-node-prune.sh"}).
+		// IMPORTANT! - when caching volume mounted, it increases the image size by about 100MB with no significant package installation speed benefits
+		WithExec([]string{"corepack", "enable"}).
+		WithExec([]string{"corepack", "prepare", fmt.Sprintf("pnpm@%s", s.config.PnpmVersion), "--activate"}).
+		WithEnvVariable("CI", "true").
+		WithDirectory(workdir, builder.Directory(workdir), dagger.ContainerWithDirectoryOpts{
+			Include: append([]string{}, filesForPackageInstallation...),
+		}).
+		WithExec([]string{"pnpm", "install", "--prefer-offline", "--frozen-lockfile", "--prod"}).
+		WithExec([]string{"pnpm", "prune", "--prod", "--no-optional"}).
+		// gobinaries usually installs into /usr/local/bin; if not, find it with `which node-prune`
+		WithExec([]string{"/usr/local/bin/node-prune", "/app/node_modules"})
 
-	runtimeStepsResult, err := s.processSteps(s.config.RuntimeSteps, pipelinePlaceholderResolvers, TaskIDSetupPnpm)
+	allowedRuntimeStageTasks := []TaskID{
+		TaskIDSetupPnpm,
+		TaskIDSetupBun,
+	}
+	runtimeStepsResult, err := s.processSteps(s.config.RuntimeSteps, pipelinePlaceholderResolvers, allowedRuntimeStageTasks...)
 	if err != nil {
 		return fmt.Errorf("processing runtime steps: %w", err)
 	}
 
-	builderWorkdir := builder.Directory(workdir)
-	runtimePathsToInclude := append(includePaths, "node_modules")
+	runtimePathsToInclude := includePaths
 	runtime := client.Container(dagger.ContainerOpts{Platform: dagger.Platform(platform)}).
 		From(baseImage).
-		WithWorkdir(workdir).
-		WithDirectory(workdir, builderWorkdir, dagger.ContainerWithDirectoryOpts{
+		WithWorkdir(workdir)
+
+	if len(runtimeStepsResult.SystemPackages) > 0 {
+		runtime = runtime.WithExec(append([]string{"apk", "add", "--no-cache"}, runtimeStepsResult.SystemPackages...))
+
+		for _, cmd := range runtimeStepsResult.PostInstallCmds {
+			runtime = runtime.WithExec(cmd)
+		}
+	}
+
+	if len(runtimeStepsResult.NpmPackages) > 0 {
+		return fmt.Errorf("%w - installing npm packages is not supported in runtime phase", lib.BadUserInputError)
+	}
+
+	// The key parts for runtime image construction:
+	// 1. Copy the pruned node_modules from the deps stage - it must utilize the layer caching so it is not uploaded every time the image is rebuilt
+	// 2. Copy other node_modules for the packages in the monorepo. The goal is the same - utilize layer caching for node_modules
+	// 3. Copy the rest of source code and build artifacts without overriding node_modules
+	runtime = runtime.
+		WithDirectory(filepath.Join(workdir, "node_modules"), deps.Directory(filepath.Join(workdir, "node_modules"))).
+		WithDirectory(workdir, deps.Directory(workdir), dagger.ContainerWithDirectoryOpts{
+			Include: slices.Collect(func(yield func(path string) bool) {
+				for _, pkg := range append(dependencies, appPackage) {
+					yield(filepath.Join(pkg.Path, "node_modules"))
+				}
+			}),
+		}).
+		WithDirectory(workdir, builder.Directory(workdir), dagger.ContainerWithDirectoryOpts{
 			Include: runtimePathsToInclude,
+			Exclude: []string{"node_modules"},
 		})
 	l.Info("runtime paths to include", "paths", runtimePathsToInclude)
 
@@ -336,12 +383,19 @@ func (s *Service) processSteps(steps []Step, placeholderResolvers PlaceholderRes
 			task = NewSetupPnpmTask(s.config, step)
 		case TaskIDCli:
 			task = NewCliTask(step, placeholderResolvers, s.placeholders)
+		case TaskIDSetupBun:
+			task = NewSetupBunTask(step)
 		default:
 			return result, fmt.Errorf("%w - unsupported pipeline task '%s'", lib.BadUserInputError, step.Task)
 		}
 
 		result.SystemPackages = append(result.SystemPackages, task.GetRequiredSystemPackages()...)
-		result.PostInstallCmds = append(result.PostInstallCmds, task.GetPostInstallCommands()...)
+
+		postInstallCommands, err := task.GetPostInstallCommands()
+		if err != nil {
+			return result, fmt.Errorf("getting post install commands: %w", err)
+		}
+		result.PostInstallCmds = append(result.PostInstallCmds, postInstallCommands...)
 		result.NpmPackages = append(result.NpmPackages, task.GetRequiredNpmPackages()...)
 		result.Tasks = append(result.Tasks, task)
 
@@ -349,7 +403,7 @@ func (s *Service) processSteps(steps []Step, placeholderResolvers PlaceholderRes
 			"task", step.Task,
 			"system_packages", task.GetRequiredSystemPackages(),
 			"npm_packages", task.GetRequiredNpmPackages(),
-			"post_install_cmds", task.GetPostInstallCommands())
+			"post_install_cmds", postInstallCommands)
 	}
 
 	return result, nil

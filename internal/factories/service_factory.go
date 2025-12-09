@@ -36,6 +36,8 @@ func NewServiceFactory(service string, executionCtx *SharedServicesLocator) *Ser
 }
 
 func (f *ServiceFactory) NewImageService() (*container_image.Service, error) {
+	l := slog.With("context", "service_factory", "method", "NewImageService")
+
 	var imageConfig container_image.Config
 	if err := f.config.LoadVariableServiceConfigPart(&imageConfig, f.service, "container"); err != nil {
 		return nil, fmt.Errorf("error loading image build config: %w", err)
@@ -70,7 +72,8 @@ func (f *ServiceFactory) NewImageService() (*container_image.Service, error) {
 	}
 	repoRoot := pipelineConfig.Root
 	if repoRoot == "" {
-		return nil, fmt.Errorf("no repository root provided")
+		repoRoot = "."
+		l.Info("no repository root provided for pipeline, using current directory", "root", repoRoot)
 	}
 	repoRoot = filepath.Clean(repoRoot)
 	monorepoProvider := pipeline.NewPnpmMonorepo(repoRoot)
