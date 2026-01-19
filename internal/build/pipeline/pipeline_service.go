@@ -26,6 +26,12 @@ type Config struct {
 	RuntimeSteps []Step       `mapstructure:"runtime_steps"`
 	Platform     lib.Platform `mapstructure:"platform"`
 	Cmd          []string     `mapstructure:"cmd"`
+	Opt          Options      `mapstructure:"opt"`
+}
+
+type Options struct {
+	PackagesPrune *bool `mapstructure:"packages_prune"`
+	NodePrune     *bool `mapstructure:"node_prune"`
 }
 
 type Step struct {
@@ -205,8 +211,12 @@ func (s *Service) ProcessPipeline(ctx context.Context, outputImage string) error
 		WithWorkdir(workdir).
 		WithEnvVariable("PNPM_HOME", "/pnpm").
 		WithEnvVariable("PATH", "$PNPM_HOME:$PATH", dagger.ContainerWithEnvVariableOpts{Expand: true}).
-		WithMountedCache("/pnpm/store", pnpmCacheVolume).
-		WithExec(append([]string{"apk", "add", "--no-cache"}, stepResults.SystemPackages...))
+		WithMountedCache("/pnpm/store", pnpmCacheVolume)
+
+	if len(stepResults.SystemPackages) > 0 {
+		builder = builder.
+			WithExec(append([]string{"apk", "add", "--no-cache"}, stepResults.SystemPackages...))
+	}
 
 	for _, cmd := range stepResults.PostInstallCmds {
 		builder = builder.WithExec(cmd)
@@ -216,7 +226,9 @@ func (s *Service) ProcessPipeline(ctx context.Context, outputImage string) error
 		WithExec([]string{"corepack", "enable"}).
 		WithExec([]string{"corepack", "prepare", fmt.Sprintf("pnpm@%s", s.config.PnpmVersion), "--activate"})
 
-	builder = builder.WithExec(append([]string{"pnpm", "add", "-g"}, stepResults.NpmPackages...))
+	if len(stepResults.NpmPackages) > 0 {
+		builder = builder.WithExec(append([]string{"pnpm", "add", "-g"}, stepResults.NpmPackages...))
+	}
 
 	builder = builder.
 		WithDirectory(workdir, dag.Host().Directory(s.repoRoot), dagger.ContainerWithDirectoryOpts{
@@ -261,12 +273,26 @@ func (s *Service) ProcessPipeline(ctx context.Context, outputImage string) error
 	}
 	l.Debug("node_modules paths to clean up", "paths", nodeModulePaths)
 
+	nodePrune := true
+	if s.config.Opt.NodePrune != nil {
+		nodePrune = *s.config.Opt.NodePrune
+	}
+	packagesPrune := true
+	if s.config.Opt.PackagesPrune != nil {
+		packagesPrune = *s.config.Opt.PackagesPrune
+	}
 	deps := client.Container(dagger.ContainerOpts{Platform: dagger.Platform(platform)}).
 		From(baseImage).
-		WithWorkdir(workdir).
-		WithExec([]string{"apk", "add", "--no-cache", "curl"}).
-		WithExec([]string{"curl", "-fsSL", "https://gobinaries.com/tj/node-prune", "-o", "/tmp/install-node-prune.sh"}).
-		WithExec([]string{"sh", "/tmp/install-node-prune.sh"}).
+		WithWorkdir(workdir)
+
+	if nodePrune {
+		deps = deps.
+			WithExec([]string{"apk", "add", "--no-cache", "curl"}).
+			WithExec([]string{"curl", "-fsSL", "https://gobinaries.com/tj/node-prune", "-o", "/tmp/install-node-prune.sh"}).
+			WithExec([]string{"sh", "/tmp/install-node-prune.sh"})
+	}
+
+	deps = deps.
 		// IMPORTANT! - when caching volume mounted, it increases the image size by about 100MB with no significant package installation speed benefits
 		WithExec([]string{"corepack", "enable"}).
 		WithExec([]string{"corepack", "prepare", fmt.Sprintf("pnpm@%s", s.config.PnpmVersion), "--activate"}).
@@ -274,10 +300,19 @@ func (s *Service) ProcessPipeline(ctx context.Context, outputImage string) error
 		WithDirectory(workdir, builder.Directory(workdir), dagger.ContainerWithDirectoryOpts{
 			Include: append([]string{}, filesForPackageInstallation...),
 		}).
-		WithExec([]string{"pnpm", "install", "--prefer-offline", "--frozen-lockfile", "--prod"}).
-		WithExec([]string{"pnpm", "prune", "--prod", "--no-optional"}).
-		// gobinaries usually installs into /usr/local/bin; if not, find it with `which node-prune`
-		WithExec([]string{"/usr/local/bin/node-prune", "/app/node_modules"})
+		WithExec([]string{"pnpm", "install", "--prefer-offline", "--frozen-lockfile", "--prod"})
+
+	if packagesPrune {
+		deps = deps.
+			WithExec([]string{"pnpm", "prune", "--prod", "--no-optional"})
+	}
+
+	// TODO: check is pointing to all the node_modules of the workspace packages will produce better result of the final image size reduction
+	if nodePrune {
+		deps = deps.
+			// gobinaries usually installs into /usr/local/bin; if not, find it with `which node-prune`
+			WithExec([]string{"/usr/local/bin/node-prune", "/app/node_modules"})
+	}
 
 	allowedRuntimeStageTasks := []TaskID{
 		TaskIDSetupPnpm,
@@ -295,10 +330,10 @@ func (s *Service) ProcessPipeline(ctx context.Context, outputImage string) error
 
 	if len(runtimeStepsResult.SystemPackages) > 0 {
 		runtime = runtime.WithExec(append([]string{"apk", "add", "--no-cache"}, runtimeStepsResult.SystemPackages...))
+	}
 
-		for _, cmd := range runtimeStepsResult.PostInstallCmds {
-			runtime = runtime.WithExec(cmd)
-		}
+	for _, cmd := range runtimeStepsResult.PostInstallCmds {
+		runtime = runtime.WithExec(cmd)
 	}
 
 	if len(runtimeStepsResult.NpmPackages) > 0 {
