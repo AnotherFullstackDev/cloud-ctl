@@ -66,9 +66,9 @@ func (f *ServiceFactory) NewImageService() (*container_image.Service, error) {
 		log.Fatalf("no registry configured for image: %s", imageConfig.Image)
 	}
 
-	pipelineConfig := imageConfig.Build.Pipeline
-	if pipelineConfig == nil {
-		pipelineConfig = &pipeline.Config{}
+	pipelineConfig := &pipeline.Config{}
+	if imageConfig.Build != nil && imageConfig.Build.Pipeline != nil {
+		pipelineConfig = imageConfig.Build.Pipeline
 	}
 	repoRoot := pipelineConfig.Root
 	if repoRoot == "" {
@@ -112,7 +112,11 @@ func (f *ServiceFactory) NewCloudProvider() (clouds.CloudProvider, error) {
 			return nil, fmt.Errorf("error loading AWS ECS config: %s", err)
 		}
 
-		cloudProvider = aws.NewEcsProvider(ecsCfg)
+		ecsProvider, err := aws.NewEcsProvider(ecsCfg)
+		if err != nil {
+			return nil, fmt.Errorf("error creating AWS ECS provider: %w", err)
+		}
+		cloudProvider = ecsProvider
 	}
 
 	if cloudProvider == nil {

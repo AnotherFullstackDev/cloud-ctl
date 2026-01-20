@@ -2,6 +2,7 @@ package registry
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/AnotherFullstackDev/cloud-ctl/internal/lib"
@@ -42,18 +43,21 @@ func (r *AwsECR) GetImageRef() (string, error) {
 	if len(mainParts) != 2 {
 		return "", fmt.Errorf("%w - invalid AWS ECR image format: %s", lib.BadUserInputError, imageID)
 	}
+	slog.Debug("split into main parts", "main_parts", mainParts)
 
 	registryURL := mainParts[0]
-	registryParts := strings.Split(registryURL, ".")
-	if len(registryParts) != 6 {
+	registryUrlParts := strings.Split(registryURL, ".")
+	if len(registryUrlParts) != 6 {
 		return "", fmt.Errorf("%w - invalid registry URL: %s", lib.BadUserInputError, registryURL)
 	}
+	slog.Debug("split into registry parts", "registry_parts", registryUrlParts)
 
-	repositoryRef := registryParts[1]
-	registryParts = strings.Split(repositoryRef, ":")
-	if len(registryParts) != 2 {
+	repositoryRef := mainParts[1]
+	repositoryParts := strings.Split(repositoryRef, ":")
+	if len(repositoryParts) != 2 {
 		return "", fmt.Errorf("%w - invalid repository: %s", lib.BadUserInputError, repositoryRef)
 	}
+	slog.Debug("split into repository parts", "repository_parts", repositoryParts)
 
 	return imageID, nil
 }
