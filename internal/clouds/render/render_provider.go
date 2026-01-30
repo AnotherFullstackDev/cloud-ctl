@@ -2,6 +2,7 @@ package render
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"log/slog"
@@ -23,6 +24,7 @@ type Provider struct {
 	serviceID string
 	config    Config
 	api       *api2.Client
+	storage   lib.CredentialsStorage
 }
 
 func MustNewProvider(serviceID string, cfg Config, storage lib.CredentialsStorage, authEnvKeys []string) *Provider {
@@ -36,6 +38,7 @@ func MustNewProvider(serviceID string, cfg Config, storage lib.CredentialsStorag
 		serviceID: serviceID,
 		config:    cfg,
 		api:       api,
+		storage:   storage,
 	}
 }
 
@@ -50,6 +53,9 @@ func (p *Provider) DeployServiceFromImage(ctx context.Context, registry clouds.I
 
 	service, err := p.api.RetrieveService(ctx, p.config.ServiceID)
 	if err != nil {
+		if errors.Is(err, api2.UnauthorizedError) {
+			p.storage.Remove(renderApiSecretKey)
+		}
 		return fmt.Errorf("retrieving service %s: %w", p.config.ServiceID, err)
 	}
 	slog.DebugContext(ctx, "retrieved service details", "service_id", p.config.ServiceID, "service", service)
@@ -70,6 +76,9 @@ func (p *Provider) DeployServiceFromImage(ctx context.Context, registry clouds.I
 			},
 		})
 		if err != nil {
+			if errors.Is(err, api2.UnauthorizedError) {
+				p.storage.Remove(renderApiSecretKey)
+			}
 			return fmt.Errorf("updating service %s image from %s to %s: %w", p.config.ServiceID, service.ImagePath, imageRef, err)
 		}
 	}
@@ -78,6 +87,9 @@ func (p *Provider) DeployServiceFromImage(ctx context.Context, registry clouds.I
 
 	err = p.api.TriggerDeploy(ctx, p.config.ServiceID, deploys.TriggerDeployInput{ImageID: imageRef})
 	if err != nil {
+		if errors.Is(err, api2.UnauthorizedError) {
+			p.storage.Remove(renderApiSecretKey)
+		}
 		return fmt.Errorf("deploying service %s: %w", p.config.ServiceID, err)
 	}
 	return nil
