@@ -196,8 +196,14 @@ func (s *Service) recompressImage(ctx context.Context, img v1.Image, algorithm C
 	// Start with an empty image and add recompressed layers
 	result := empty.Image
 
-	// Set the config
-	result, err = mutate.ConfigFile(result, configFile)
+	// Create a copy of the config to avoid modifying the original.
+	// Clear DiffIDs since AppendLayers will rebuild them from the recompressed layers.
+	// Without this, we'd have original DiffIDs + appended DiffIDs = 2x the expected count.
+	newConfig := *configFile
+	newConfig.RootFS.DiffIDs = nil
+
+	// Set the config (without DiffIDs - they'll be added by AppendLayers)
+	result, err = mutate.ConfigFile(result, &newConfig)
 	if err != nil {
 		return nil, fmt.Errorf("setting image config: %w", err)
 	}
