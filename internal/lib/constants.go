@@ -6,6 +6,7 @@ const (
 	RenderProviderKey       = "render"
 	AwsEcsProviderKey       = "aws_ecs"
 	AwsAppRunnerProviderKey = "aws_apprunner"
+	GcpCloudRunProviderKey  = "gcp_cloudrun"
 )
 
 const (

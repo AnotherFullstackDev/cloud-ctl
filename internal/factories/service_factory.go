@@ -9,6 +9,7 @@ import (
 	"github.com/AnotherFullstackDev/cloud-ctl/internal/build/pipeline"
 	"github.com/AnotherFullstackDev/cloud-ctl/internal/clouds"
 	"github.com/AnotherFullstackDev/cloud-ctl/internal/clouds/aws"
+	"github.com/AnotherFullstackDev/cloud-ctl/internal/clouds/gcp"
 	"github.com/AnotherFullstackDev/cloud-ctl/internal/clouds/render"
 	"github.com/AnotherFullstackDev/cloud-ctl/internal/config"
 	"github.com/AnotherFullstackDev/cloud-ctl/internal/container_image"
@@ -62,6 +63,13 @@ func (f *ServiceFactory) NewImageService() (*container_image.Service, error) {
 		}
 
 		containerRegistry = registry.NewAwsECR(registry.AwsECRConfig(resolvedEcr))
+	case imageConfig.Registry.GcpAr != nil:
+		resolvedGcpAr, err := f.placeholdersService.ResolvePlaceholders(string(*imageConfig.Registry.GcpAr))
+		if err != nil {
+			return nil, fmt.Errorf("resolving GCP Artifact Registry placeholder: %w", err)
+		}
+
+		containerRegistry = registry.NewGcpArtifactRegistry(registry.GcpArtifactRegistryConfig(resolvedGcpAr))
 	default:
 		log.Fatalf("no registry configured for image: %s", imageConfig.Image)
 	}
@@ -132,6 +140,21 @@ func (f *ServiceFactory) NewCloudProvider() (clouds.CloudProvider, error) {
 			return nil, fmt.Errorf("error creating AWS App Runner provider: %w", err)
 		}
 		cloudProvider = appRunnerProvider
+	}
+
+	if _, ok := svc.Extras[lib.GcpCloudRunProviderKey]; ok {
+		slog.Info("loading GCP Cloud Run provider for service", "service", f.service)
+
+		var cloudRunCfg gcp.CloudRunConfig
+		if err := f.config.LoadVariableServiceConfigPart(&cloudRunCfg, f.service, lib.GcpCloudRunProviderKey); err != nil {
+			return nil, fmt.Errorf("error loading GCP Cloud Run config: %w", err)
+		}
+
+		cloudRunProvider, err := gcp.NewCloudRunProvider(cloudRunCfg)
+		if err != nil {
+			return nil, fmt.Errorf("error creating GCP Cloud Run provider: %w", err)
+		}
+		cloudProvider = cloudRunProvider
 	}
 
 	if cloudProvider == nil {
