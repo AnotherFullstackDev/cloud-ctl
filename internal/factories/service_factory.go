@@ -119,6 +119,21 @@ func (f *ServiceFactory) NewCloudProvider() (clouds.CloudProvider, error) {
 		cloudProvider = ecsProvider
 	}
 
+	if _, ok := svc.Extras[lib.AwsAppRunnerProviderKey]; ok {
+		slog.Info("loading AWS App Runner provider for service", "service", f.service)
+
+		var appRunnerCfg aws.AppRunnerConfig
+		if err := f.config.LoadVariableServiceConfigPart(&appRunnerCfg, f.service, lib.AwsAppRunnerProviderKey); err != nil {
+			return nil, fmt.Errorf("error loading AWS App Runner config: %s", err)
+		}
+
+		appRunnerProvider, err := aws.NewAppRunnerProvider(appRunnerCfg)
+		if err != nil {
+			return nil, fmt.Errorf("error creating AWS App Runner provider: %w", err)
+		}
+		cloudProvider = appRunnerProvider
+	}
+
 	if cloudProvider == nil {
 		return nil, fmt.Errorf("service %s has no valid cloud provider configured", f.service)
 	}

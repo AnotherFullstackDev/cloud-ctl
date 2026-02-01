@@ -3,8 +3,9 @@ package lib
 import "fmt"
 
 const (
-	RenderProviderKey = "render"
-	AwsEcsProviderKey = "aws_ecs"
+	RenderProviderKey       = "render"
+	AwsEcsProviderKey       = "aws_ecs"
+	AwsAppRunnerProviderKey = "aws_apprunner"
 )
 
 const (
