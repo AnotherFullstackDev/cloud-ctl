@@ -9,11 +9,13 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"math"
 	"net/http"
 	"os"
 	"os/exec"
 	"runtime"
+	"slices"
 	"time"
 
 	"github.com/AnotherFullstackDev/cloud-ctl/internal/build/pipeline"
@@ -397,9 +399,22 @@ func (s *Service) PushImage(ctx context.Context) error {
 		}
 	}
 
+	destTags := make(map[name.Reference]remote.Taggable, len(s.config.Registry.Tags)+1)
 	destTag, err := name.NewTag(destRef)
 	if err != nil {
 		return fmt.Errorf("parsing destination image tag: %w", err)
+	}
+	destTags[destTag] = image
+	repository := destTag.Repository.String()
+	for _, tag := range s.config.Registry.Tags {
+		extraDestRef := fmt.Sprintf("%s:%s", repository, tag)
+		slog.DebugContext(ctx, "adding extra destination image tag", "extra_dest_ref", extraDestRef)
+
+		extraDestTag, err := name.NewTag(extraDestRef)
+		if err != nil {
+			return fmt.Errorf("parsing extra destination image tag '%s': %w", extraDestRef, err)
+		}
+		destTags[extraDestTag] = image
 	}
 
 	// Determine authentication method based on registry auth type
@@ -432,6 +447,7 @@ func (s *Service) PushImage(ctx context.Context) error {
 	slog.InfoContext(ctx, "pushing image to remote registry",
 		"source", srcRef,
 		"dest", destTag,
+		"extra_dest_tags", slices.Collect(maps.Keys(destTags)),
 		"os", imageConfig.OS,
 		"architecture", imageConfig.Architecture)
 
@@ -478,7 +494,7 @@ func (s *Service) PushImage(ctx context.Context) error {
 				Variant:      imageConfig.Variant,
 			}),
 		}
-		if err := remote.Write(destTag, image, options...); err != nil {
+		if err := remote.MultiWrite(destTags, options...); err != nil {
 			var registryErr *transport.Error
 			if errors.As(err, &registryErr) {
 				isUnauthorizedErr := false

@@ -36,7 +36,8 @@ type Config struct {
 }
 
 type RegistryConfig struct {
-	Ghcr   *registry.GithubContainerRegistryConfig   `mapstructure:"ghcr"`
-	AWSEcr *registry.AwsECRConfig                    `mapstructure:"aws_ecr"`
-	GcpAr  *registry.GcpArtifactRegistryConfig       `mapstructure:"gcp_ar"`
+	Ghcr   *registry.GithubContainerRegistryConfig `mapstructure:"ghcr"`
+	AWSEcr *registry.AwsECRConfig                  `mapstructure:"aws_ecr"`
+	GcpAr  *registry.GcpArtifactRegistryConfig     `mapstructure:"gcp_ar"`
+	Tags   []string                                `mapstructure:"tags"`
 }
