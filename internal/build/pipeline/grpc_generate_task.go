@@ -206,6 +206,16 @@ func (t *GrpcGenerateTask) GetCmd() ([][]string, error) {
 		extraTsProtoOptions = append(extraTsProtoOptions, fmt.Sprintf("--ts_proto_opt=%s", tsProtoOption))
 	}
 
+	paths, ok := t.step.Extra["path"]
+	if !ok {
+		paths = []any{}
+	}
+	pathsSlice, err := lib.ConfigEntryToTypedSlice[string](paths, "path")
+	if err != nil {
+		return nil, fmt.Errorf("%w - 'path' option should be a list of strings for %s: %w", lib.BadUserInputError, t.step.Task, err)
+	}
+	l.Info("got proto paths", "paths", pathsSlice)
+
 	protoFiles, err := t.getProtoFilesByPatterns(includePatternsSlice, excludePatternsSlice)
 	if err != nil {
 		return nil, fmt.Errorf("get protobuf files: %w", err)
@@ -230,6 +240,9 @@ func (t *GrpcGenerateTask) GetCmd() ([][]string, error) {
 	// TODO: here will be logic for proto root folders configuration
 	// Currently it is the root of the specified monorepo
 	protoRootFolders := []string{"."}
+	if len(pathsSlice) > 0 {
+		protoRootFolders = append(protoRootFolders, pathsSlice...)
+	}
 	protoPaths := make([]string, 0, len(protoRootFolders))
 	for _, protoFolder := range protoRootFolders {
 		protoPaths = append(protoPaths, fmt.Sprintf("--proto_path=%s", protoFolder))
