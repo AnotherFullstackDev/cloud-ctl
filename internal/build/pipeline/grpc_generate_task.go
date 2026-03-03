@@ -44,7 +44,7 @@ func (t *GrpcGenerateTask) GetPostInstallCommands() ([][]string, error) {
 	return [][]string{
 		// TODO: check it, because it feels like just installation of extra proto files/packages to use during compilation & inside proto files declaration
 		{"mkdir", "-p", "/usr/local/include/google"},
-		{"ln", "-s", "/usr/include/google/protobuf", "/usr/local/include/google/protobuf"},
+		{"ln", "-sf", "/usr/include/google/protobuf", "/usr/local/include/google/protobuf"},
 	}, nil
 }
 
@@ -241,7 +241,7 @@ func (t *GrpcGenerateTask) GetCmd() ([][]string, error) {
 	// Currently it is the root of the specified monorepo
 	protoRootFolders := []string{"."}
 	if len(pathsSlice) > 0 {
-		protoRootFolders = append(protoRootFolders, pathsSlice...)
+		protoRootFolders = pathsSlice
 	}
 	protoPaths := make([]string, 0, len(protoRootFolders))
 	for _, protoFolder := range protoRootFolders {
